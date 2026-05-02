@@ -3,14 +3,16 @@ import { ConvexHttpClient } from "convex/browser";
 import { Utensils, Coffee, Cookie } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { api } from "../../convex/_generated/api";
+import { useAuth } from "../context/AuthContext";
 
-// 🔥 Safe Convex init
+// Safe Convex init
 if (!import.meta.env.VITE_CONVEX_URL) {
-  throw new Error("VITE_CONVEX_URL is missing. Check your .env file.");
+  throw new Error("VITE_CONVEX_URL is missing. Check your environment variables.");
 }
 const convex = new ConvexHttpClient(import.meta.env.VITE_CONVEX_URL);
 
 export default function ServeMeal() {
+  const { user } = useAuth();
   const [students, setStudents] = useState<any[]>([]);
   const [groupedClasses, setGroupedClasses] = useState<Record<string, string[]>>({});
   const [campuses, setCampuses] = useState<string[]>([]);
@@ -22,14 +24,12 @@ export default function ServeMeal() {
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
 
-  // ✅ Menu
   const meals = [
     { name: "Lunch", id: "kd77641c1y3xxashknesq7d49h85vdsv", points: 100, icon: <Utensils /> },
     { name: "Tea", id: "kd70n8tefvg7r81xkxkme7h9jh85vw4a", points: 20, icon: <Coffee /> },
     { name: "Mandazi", id: "kd7fj69vwrst8nsq2qc8pbsgzn85t0hs", points: 10, icon: <Cookie /> },
   ];
 
-  // 🔹 Group classes by grade
   const groupClasses = (classes: string[]) => {
     const grouped: Record<string, string[]> = {};
     classes.forEach((cls) => {
@@ -40,7 +40,6 @@ export default function ServeMeal() {
     return grouped;
   };
 
-  // 📦 Load campuses
   useEffect(() => {
     const load = async () => {
       try {
@@ -53,7 +52,6 @@ export default function ServeMeal() {
     load();
   }, []);
 
-  // 📦 Load classes (based on campus)
   useEffect(() => {
     const load = async () => {
       try {
@@ -68,7 +66,6 @@ export default function ServeMeal() {
     load();
   }, [selectedCampus]);
 
-  // 👥 Load students
   useEffect(() => {
     const load = async () => {
       try {
@@ -90,34 +87,29 @@ export default function ServeMeal() {
     setReceipt(null);
   };
 
-  // 🍽️ Serve meal
   const handleServeMeal = async (meal: (typeof meals)[0]) => {
-    if (!selectedStudent || loading) return;
+    if (!selectedStudent || loading || balance < meal.points) return;
 
     setLoading(true);
-
     try {
       const res: any = await convex.mutation(
         api.mealService.printMealPass,
         {
           studentId: selectedStudent._id,
           menuItemId: meal.id,
-          printedBy: "demo@user.com",
+          printedBy: user?.email || "staff_member",
         }
       );
 
       setReceipt(res.receipt);
       setBalance(res.receipt.balanceAfter);
-
     } catch (err) {
       console.error(err);
       alert("Transaction failed. Check balance or connection.");
     }
-
     setLoading(false);
   };
 
-  // 🔍 Search
   const filteredStudents = students.filter((s) =>
     s.studentName.toLowerCase().includes(searchTerm.toLowerCase()) ||
     s.admNo?.toLowerCase().includes(searchTerm.toLowerCase())
@@ -125,11 +117,7 @@ export default function ServeMeal() {
 
   return (
     <div className="flex h-screen bg-brand-bg">
-
-      {/* LEFT PANEL */}
       <div className="w-96 bg-white border-r flex flex-col">
-
-        {/* Search */}
         <div className="p-4">
           <input
             placeholder="Search student or adm no..."
@@ -138,8 +126,6 @@ export default function ServeMeal() {
             className="w-full border p-3 rounded-xl"
           />
         </div>
-
-        {/* Campus Filter */}
         <div className="px-4 pb-2">
           <p className="text-xs font-semibold text-gray-500 mb-1">Campus</p>
           <select
@@ -153,20 +139,13 @@ export default function ServeMeal() {
             className="w-full border p-2 rounded"
           >
             <option value="">All Campuses</option>
-            {campuses.map((c) => (
-              <option key={c}>{c}</option>
-            ))}
+            {campuses.map((c) => <option key={c}>{c}</option>)}
           </select>
         </div>
-
-        {/* Class Filter */}
         <div className="px-4 max-h-48 overflow-y-auto">
           {Object.entries(groupedClasses).map(([grade, cls]) => (
             <div key={grade}>
-              <p className="text-xs font-bold text-gray-400">
-                Grade {grade}
-              </p>
-
+              <p className="text-xs font-bold text-gray-400">Grade {grade}</p>
               {cls.map((c) => (
                 <div
                   key={c}
@@ -175,9 +154,7 @@ export default function ServeMeal() {
                     setSelectedStudent(null);
                     setReceipt(null);
                   }}
-                  className={`p-2 cursor-pointer rounded ${
-                    selectedClass === c ? "bg-brand-primary" : "hover:bg-gray-100"
-                  }`}
+                  className={`p-2 cursor-pointer rounded ${selectedClass === c ? "bg-brand-primary" : "hover:bg-gray-100"}`}
                 >
                   {c}
                 </div>
@@ -185,18 +162,12 @@ export default function ServeMeal() {
             </div>
           ))}
         </div>
-
-        {/* Students */}
         <div className="flex-1 overflow-y-auto p-2">
           {filteredStudents.map((s) => (
             <div
               key={s._id}
               onClick={() => handleSelectStudent(s)}
-              className={`p-3 rounded cursor-pointer ${
-                selectedStudent?._id === s._id
-                  ? "bg-brand-primary"
-                  : "bg-white hover:bg-gray-100"
-              }`}
+              className={`p-3 rounded cursor-pointer ${selectedStudent?._id === s._id ? "bg-brand-primary" : "bg-white hover:bg-gray-100"}`}
             >
               {s.studentName}
               <div className="text-xs text-gray-500">{s.admNo}</div>
@@ -205,30 +176,17 @@ export default function ServeMeal() {
         </div>
       </div>
 
-      {/* RIGHT PANEL */}
       <div className="flex-1 p-8 space-y-6">
-
         {!selectedStudent ? (
           <p className="text-gray-500">Select a student</p>
         ) : (
           <>
-            {/* Student Card */}
             <div className="bg-brand-navy text-white p-6 rounded-xl">
               <h2>{selectedStudent.studentName}</h2>
               <p>{selectedStudent.class}</p>
-
-              <h1 className="text-3xl font-bold mt-2">
-                {balance} pts
-              </h1>
-
-              {balance < 100 && (
-                <p className="text-red-400 text-sm mt-2">
-                  Low balance
-                </p>
-              )}
+              <h1 className="text-3xl font-bold mt-2">{balance} pts</h1>
+              {balance < 100 && <p className="text-red-400 text-sm mt-2">Low balance</p>}
             </div>
-
-            {/* Meals */}
             <div className="grid grid-cols-3 gap-6">
               {meals.map((meal) => (
                 <button
@@ -239,46 +197,40 @@ export default function ServeMeal() {
                 >
                   <div className="mb-2">{meal.icon}</div>
                   {meal.name}
-                  <div className="text-sm text-gray-500">
-                    {meal.points} pts
-                  </div>
+                  <div className="text-sm text-gray-500">{meal.points} pts</div>
                 </button>
               ))}
             </div>
           </>
         )}
 
-        {/* Receipt */}
         <AnimatePresence>
           {receipt && (
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              className="bg-white p-4 w-[57mm] text-xs"
+              className="bg-white p-4 w-[57mm] text-xs shadow-lg border border-dashed border-gray-300"
               id="receipt-print"
             >
+              <p className="font-bold text-center mb-2">MEAL PASS</p>
               <p>{receipt.studentName}</p>
               <p>{receipt.className}</p>
-
-              <hr />
-
-              <p>{receipt.menuItem}</p>
-              <p>{receipt.pointsCost} pts</p>
-
-              <hr />
-
-              <p>Balance: {receipt.balanceAfter}</p>
-
+              <hr className="my-2" />
+              <div className="flex justify-between">
+                <span>{receipt.menuItem}</span>
+                <span>{receipt.pointsCost} pts</span>
+              </div>
+              <hr className="my-2" />
+              <p className="text-right">Balance: {receipt.balanceAfter}</p>
               <button
                 onClick={() => window.print()}
-                className="mt-2 w-full bg-black text-white py-1 rounded text-xs"
+                className="mt-4 w-full bg-black text-white py-2 rounded no-print"
               >
-                Print
+                Print Receipt
               </button>
             </motion.div>
           )}
         </AnimatePresence>
-
       </div>
     </div>
   );

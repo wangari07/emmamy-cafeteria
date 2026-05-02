@@ -17,9 +17,9 @@ import { Swimming } from './views/Swimming';
 import { MPesaInbox } from './views/MPesaInbox';
 import { CardDetails } from './views/CardDetails';
 import { Lobby } from './views/Lobby';
-import { StudentProfile } from './views/StudentProfile';
-import { SMSCenter } from './views/SMSCenter';
-import { PasswordReset } from './views/PasswordReset';
+import { StudentProfile } from './views/Studentprofile'; // Matches git casing
+import { SMSCenter } from './views/SMScenter'; // Matches git casing
+import { PasswordReset } from './views/Passwordreset'; // Matches git casing
 import { PaymentReview } from './views/PaymentReview';
 import ServeMeal from './views/ServeMeal';
 import { useAuth } from './context/AuthContext';
@@ -130,7 +130,6 @@ function App() {
           <AccessDenied />
         );
 
-      // ✅ THIS WAS MISSING — caused the "Coming soon..." bug
       case 'student-profile':
         return selectedStudentId ? (
           <StudentProfile
@@ -156,7 +155,6 @@ function App() {
           <AccessDenied />
         );
 
-      // ✅ THIS WAS MISSING
       case 'card-details':
         return access.canSeeMealCards && selectedCardId ? (
           <CardDetails
@@ -179,7 +177,6 @@ function App() {
       case 'transactions':
         return access.canSeeTransactions ? <Transactions /> : <AccessDenied />;
 
-      // ✅ THIS WAS MISSING
       case 'receipts':
         return access.canSeeReceipts ? <Receipts /> : <AccessDenied />;
 
@@ -189,19 +186,15 @@ function App() {
       case 'settings':
         return access.canSeeSettings ? <Settings /> : <AccessDenied />;
 
-      // ✅ THIS WAS MISSING
       case 'sms-center':
         return access.canSeeSMSCenter ? <SMSCenter /> : <AccessDenied />;
 
-      // ✅ THIS WAS MISSING
       case 'mpesa-inbox':
         return access.canSeeMPesaInbox ? <MPesaInbox /> : <AccessDenied />;
 
-      // ✅ THIS WAS MISSING
       case 'swimming':
         return access.canSeeSwimming ? <Swimming /> : <AccessDenied />;
 
-      // ✅ THIS WAS MISSING
       case 'add-card':
         return access.canSeeAddCard ? <AddCard /> : <AccessDenied />;
 
