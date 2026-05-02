@@ -1,0 +1,46 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand-primary: #BEFF6A;
+  --color-brand-primary-hover: #A3E635;
+  --color-brand-navy: #1A1A2E;
+  --color-brand-navy-light: #252540;
+  --color-brand-bg: #F8F7F4;
+  --color-brand-surface: #FFFFFF;
+  --color-brand-text: #1A1A2E;
+  --color-brand-text-muted: #64748B;
+  --color-brand-border: #E2E8F0;
+}
+
+body {
+  background-color: var(--color-brand-bg);
+  color: var(--color-brand-text);
+  font-family: 'Inter', sans-serif;
+}
+
+/* =========================
+   RECEIPT PRINT STYLES
+   ========================= */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+
+  #receipt-print,
+  #receipt-print * {
+    visibility: visible;
+  }
+
+  #receipt-print {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 57mm;
+    font-size: 10px;
+  }
+
+  @page {
+    size: 57mm auto;
+    margin: 0;
+  }
+}

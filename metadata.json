@@ -1,0 +1,5 @@
+{
+  "name": "Cafeteria Hub",
+  "description": "A comprehensive cafeteria management system for schools, including dashboard, inventory, student directory, and settings.",
+  "requestFramePermissions": []
+}
