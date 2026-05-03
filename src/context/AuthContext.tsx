@@ -7,7 +7,6 @@ import React, {
 } from 'react';
 import { useConvex } from 'convex/react';
 import { api } from '../../convex/_generated/api';
-import { authClient } from '../lib/auth-client';
 
 export type Role =
   | 'super_admin'
@@ -30,7 +29,7 @@ export interface Permissions {
 }
 
 export interface User {
-  id: string | number;
+  id: string;
   name: string;
   staff_id: string;
   email: string;
@@ -39,13 +38,12 @@ export interface User {
   status: 'active' | 'pending' | 'deactivated';
   permissions: Permissions;
   class_assigned?: string;
-  token?: string;
 }
 
 interface AuthContextType {
   user: User | null;
-  login: (user: User) => void;
-  logout: () => Promise<void>;
+  login: (email: string) => Promise<boolean>; // Changed to handle direct login
+  logout: () => void;
   hasPermission: (permission: keyof Permissions) => boolean;
   loading: boolean;
   refreshUser: () => Promise<void>;
@@ -65,12 +63,13 @@ const emptyPermissions: Permissions = {
   viewFullHistory: false,
 };
 
-function mapToContextUser(sessionUser: any, appUser: any): User {
+// Map Convex data to our App User interface
+function mapToContextUser(appUser: any): User {
   return {
-    id: appUser?._id || sessionUser?.id || sessionUser?.email || '',
-    name: appUser?.name || sessionUser?.name || '',
+    id: appUser?._id || '',
+    name: appUser?.name || '',
     staff_id: appUser?.staff_id || '',
-    email: appUser?.email || sessionUser?.email || '',
+    email: appUser?.email || '',
     school: appUser?.school || 'main',
     role: appUser?.role || 'staff',
     status: appUser?.status || 'pending',
@@ -87,30 +86,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const refreshUser = async () => {
     try {
       setLoading(true);
+      
+      // Look for a saved email in the browser's storage
+      const savedEmail = localStorage.getItem('cafeteria_user_email');
 
-      const session = await authClient.getSession();
-      console.log('GET SESSION RESULT:', session);
-
-      const sessionUser = session?.data?.user;
-
-      if (!sessionUser?.email) {
-        console.log('NO SESSION USER EMAIL');
+      if (!savedEmail) {
         setUser(null);
         return;
       }
 
+      // Query Convex directly using the email
       const appUser = await convex.query(api.appUsers.getUserProfileByEmail, {
-        email: sessionUser.email.trim().toLowerCase(),
+        email: savedEmail.trim().toLowerCase(),
       });
 
-      console.log('APP USER RESULT:', appUser);
-
-      const mergedUser = mapToContextUser(sessionUser, appUser);
-      console.log('MERGED USER:', mergedUser);
-
-      setUser(mergedUser);
+      if (appUser) {
+        setUser(mapToContextUser(appUser));
+      } else {
+        // If email exists but user not found in Convex, clear storage
+        localStorage.removeItem('cafeteria_user_email');
+        setUser(null);
+      }
     } catch (error) {
-      console.error('Failed to fetch user session/profile', error);
+      console.error('Auth Refresh Error:', error);
       setUser(null);
     } finally {
       setLoading(false);
@@ -121,22 +119,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     refreshUser();
   }, []);
 
-  const login = (userData: User) => {
-    setUser(userData);
+  /**
+   * Login function that checks Convex and saves session locally
+   */
+  const login = async (email: string) => {
+    try {
+      setLoading(true);
+      const appUser = await convex.query(api.appUsers.getUserProfileByEmail, {
+        email: email.trim().toLowerCase(),
+      });
+
+      if (appUser) {
+        localStorage.setItem('cafeteria_user_email', appUser.email);
+        setUser(mapToContextUser(appUser));
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error('Login Error:', error);
+      return false;
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const logout = async () => {
-    try {
-      await authClient.signOut();
-    } catch (error) {
-      console.error('Failed to logout', error);
-    } finally {
-      setUser(null);
-    }
+  const logout = () => {
+    localStorage.removeItem('cafeteria_user_email');
+    setUser(null);
   };
 
   const hasPermission = (permission: keyof Permissions) => {
     if (!user) return false;
+    // Admins bypass all permission checks
     if (user.role === 'super_admin' || user.role === 'admin') return true;
     return user.permissions?.[permission] === true;
   };
