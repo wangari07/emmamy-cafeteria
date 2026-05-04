@@ -52,7 +52,7 @@
     "winston": "^3.19.0"
   },
   "devDependencies": {
-    "@better-auth/cli": "^1.4.21",
+    "@better-auth/cli": "^0.0.1",
     "@cloudflare/vite-plugin": "^1.35.0",
     "@types/bcrypt": "^6.0.0",
     "@types/better-sqlite3": "^7.6.13",
