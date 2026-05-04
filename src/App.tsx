@@ -5,6 +5,7 @@ import { Header } from './components/Header';
 import { Dashboard } from './views/Dashboard';
 import { Inventory } from './views/Inventory';
 import { Students } from './views/Students';
+import { StudentAccountManager } from './views/StudentAccountManager';
 import { Settings } from './views/Settings';
 import { MealCards } from './views/MealCards';
 import { MenuPlanner } from './views/MenuPlanner';
@@ -17,9 +18,9 @@ import { Swimming } from './views/Swimming';
 import { MPesaInbox } from './views/MPesaInbox';
 import { CardDetails } from './views/CardDetails';
 import { Lobby } from './views/Lobby';
-import { StudentProfile } from './views/Studentprofile'; // Matches git casing
-import { SMSCenter } from './views/SMScenter'; // Matches git casing
-import { PasswordReset } from './views/Passwordreset'; // Matches git casing
+import { StudentProfile } from './views/Studentprofile';
+import { SMSCenter } from './views/SMScenter';
+import { PasswordReset } from './views/Passwordreset';
 import { PaymentReview } from './views/PaymentReview';
 import ServeMeal from './views/ServeMeal';
 import { useAuth } from './context/AuthContext';
@@ -55,6 +56,7 @@ function App() {
       return {
         canSeeDashboard: false,
         canSeeStudents: false,
+        canManageStudentAccounts: false,
         canSeeMealCards: false,
         canSeeInventory: false,
         canSeeMenu: false,
@@ -75,24 +77,65 @@ function App() {
     const isLeadership = ['super_admin', 'admin', 'headteacher'].includes(user.role);
 
     return {
-      canSeeDashboard: isLeadership || user.permissions.generateReports,
+      canSeeDashboard:
+        isLeadership ||
+        user.permissions.generateReports,
+
       canSeeStudents:
         user.permissions.viewMainStudents ||
         user.permissions.viewDigitalStudents ||
         user.permissions.viewAllClasses,
-      canSeeMealCards: isAdminLike || user.permissions.markMealsServed,
-      canSeeInventory: isAdminLike || user.role === 'manager' || user.role === 'staff',
-      canSeeMenu: isAdminLike || user.role === 'manager' || user.role === 'staff',
-      canSeeTransactions: isAdminLike,
-      canSeeReceipts: isAdminLike,
-      canSeeReports: isAdminLike || user.permissions.generateReports,
-      canSeeSettings: isAdminLike,
-      canSeeSMSCenter: isAdminLike || user.role === 'manager',
-      canSeeMPesaInbox: isAdminLike,
-      canSeePaymentReview: isAdminLike || user.role === 'manager',
-      canSeeSwimming: isLeadership,
-      canSeeAddCard: isAdminLike,
-      canServeMeals: isAdminLike || user.role === 'staff',
+
+      canManageStudentAccounts:
+        user.role === 'super_admin',
+
+      canSeeMealCards:
+        isAdminLike ||
+        user.permissions.markMealsServed,
+
+      canSeeInventory:
+        isAdminLike ||
+        user.role === 'manager' ||
+        user.role === 'staff',
+
+      canSeeMenu:
+        isAdminLike ||
+        user.role === 'manager' ||
+        user.role === 'staff',
+
+      canSeeTransactions:
+        isAdminLike,
+
+      canSeeReceipts:
+        isAdminLike,
+
+      canSeeReports:
+        isAdminLike ||
+        user.permissions.generateReports,
+
+      canSeeSettings:
+        isAdminLike,
+
+      canSeeSMSCenter:
+        isAdminLike ||
+        user.role === 'manager',
+
+      canSeeMPesaInbox:
+        isAdminLike,
+
+      canSeePaymentReview:
+        isAdminLike ||
+        user.role === 'manager',
+
+      canSeeSwimming:
+        isLeadership,
+
+      canSeeAddCard:
+        isAdminLike,
+
+      canServeMeals:
+        isAdminLike ||
+        user.role === 'staff',
     };
   }, [user]);
 
@@ -101,6 +144,7 @@ function App() {
   }
 
   if (!user) return <Login />;
+
   if (user.status === 'pending') return <Lobby />;
 
   const renderView = () => {
@@ -126,6 +170,13 @@ function App() {
               setCurrentView('student-profile');
             }}
           />
+        ) : (
+          <AccessDenied />
+        );
+
+      case 'student-account-manager':
+        return access.canManageStudentAccounts ? (
+          <StudentAccountManager />
         ) : (
           <AccessDenied />
         );
@@ -209,7 +260,12 @@ function App() {
 
   return (
     <div className="flex h-screen bg-brand-bg">
-      <Sidebar currentView={currentView} setCurrentView={setCurrentView} onLogout={logout} />
+      <Sidebar
+        currentView={currentView}
+        setCurrentView={setCurrentView}
+        onLogout={logout}
+      />
+
       <div className="flex-1 flex flex-col">
         <Header />
         <main className="flex-1 overflow-y-auto">{renderView()}</main>

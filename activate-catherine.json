@@ -1,0 +1,12 @@
+{
+  "studentId": "kd7dh50ae33n0ktm4dggp4pt4h863pbt",
+  "mealPackage": "MID_TERM_TEST_PACKAGE",
+  "meals": {
+    "lunch": true,
+    "fruit": true,
+    "tea": true,
+    "snacks": true
+  },
+  "openingPoints": 3000,
+  "reason": "Parent paid before system launch"
+}

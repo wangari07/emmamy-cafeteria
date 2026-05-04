@@ -1,0 +1,12 @@
+{"name":"appUsers","id":10001}
+{"name":"campusOrderItems","id":10002}
+{"name":"campusOrders","id":10003}
+{"name":"inventoryItems","id":10004}
+{"name":"inventoryMovements","id":10005}
+{"name":"students","id":10006}
+{"name":"mpesaMessages","id":10007}
+{"name":"payments","id":10008}
+{"name":"activityLogs","id":10009}
+{"name":"mealHistory","id":10010}
+{"name":"menuItems","id":10011}
+{"name":"walletTransactions","id":10012}

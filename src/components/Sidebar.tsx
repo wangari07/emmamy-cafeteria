@@ -11,7 +11,8 @@ import {
   LogOut,
   Receipt,
   Wallet,
-  Utensils, // ✅ NEW ICON
+  Utensils,
+  UserCog,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -29,6 +30,7 @@ export function Sidebar({ currentView, setCurrentView, onLogout }: SidebarProps)
       return {
         canSeeDashboard: false,
         canSeeStudents: false,
+        canManageStudentAccounts: false,
         canSeeMealCards: false,
         canSeeInventory: false,
         canSeeMenu: false,
@@ -37,7 +39,7 @@ export function Sidebar({ currentView, setCurrentView, onLogout }: SidebarProps)
         canSeeReports: false,
         canSeeSettings: false,
         canSeePaymentReview: false,
-        canServeMeals: false, // ✅ NEW
+        canServeMeals: false,
       };
     }
 
@@ -54,6 +56,8 @@ export function Sidebar({ currentView, setCurrentView, onLogout }: SidebarProps)
         user.permissions.viewMainStudents ||
         user.permissions.viewDigitalStudents ||
         user.permissions.viewAllClasses,
+
+      canManageStudentAccounts: user.role === 'super_admin',
 
       canSeeMealCards:
         isAdminLike ||
@@ -89,7 +93,6 @@ export function Sidebar({ currentView, setCurrentView, onLogout }: SidebarProps)
         isAdminLike ||
         user.role === 'manager',
 
-      // ✅ NEW PERMISSION
       canServeMeals:
         isAdminLike ||
         user.role === 'staff',
@@ -97,20 +100,78 @@ export function Sidebar({ currentView, setCurrentView, onLogout }: SidebarProps)
   }, [user]);
 
   const navItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, visible: access.canSeeDashboard },
-
-    // ✅ NEW BUTTON
-    { id: 'serve-meal', label: 'Serve Meal', icon: Utensils, visible: access.canServeMeals },
-
-    { id: 'payment-review', label: 'Payment Review', icon: Wallet, visible: access.canSeePaymentReview },
-    { id: 'students', label: 'Students', icon: Users, visible: access.canSeeStudents },
-    { id: 'meal-cards', label: 'Meal Cards', icon: CreditCard, visible: access.canSeeMealCards },
-    { id: 'inventory', label: 'Inventory', icon: Package, visible: access.canSeeInventory },
-    { id: 'menu', label: 'Menu Planner', icon: CalendarDays, visible: access.canSeeMenu },
-    { id: 'transactions', label: 'Transactions', icon: ArrowRightLeft, visible: access.canSeeTransactions },
-    { id: 'receipts', label: 'Receipts', icon: Receipt, visible: access.canSeeReceipts },
-    { id: 'reports', label: 'Reports', icon: BarChart3, visible: access.canSeeReports },
-    { id: 'settings', label: 'Settings', icon: Settings, visible: access.canSeeSettings },
+    {
+      id: 'dashboard',
+      label: 'Dashboard',
+      icon: LayoutDashboard,
+      visible: access.canSeeDashboard,
+    },
+    {
+      id: 'serve-meal',
+      label: 'Serve Meal',
+      icon: Utensils,
+      visible: access.canServeMeals,
+    },
+    {
+      id: 'payment-review',
+      label: 'Payment Review',
+      icon: Wallet,
+      visible: access.canSeePaymentReview,
+    },
+    {
+      id: 'students',
+      label: 'Students',
+      icon: Users,
+      visible: access.canSeeStudents,
+    },
+    {
+      id: 'student-account-manager',
+      label: 'Student Accounts',
+      icon: UserCog,
+      visible: access.canManageStudentAccounts,
+    },
+    {
+      id: 'meal-cards',
+      label: 'Meal Cards',
+      icon: CreditCard,
+      visible: access.canSeeMealCards,
+    },
+    {
+      id: 'inventory',
+      label: 'Inventory',
+      icon: Package,
+      visible: access.canSeeInventory,
+    },
+    {
+      id: 'menu',
+      label: 'Menu Planner',
+      icon: CalendarDays,
+      visible: access.canSeeMenu,
+    },
+    {
+      id: 'transactions',
+      label: 'Transactions',
+      icon: ArrowRightLeft,
+      visible: access.canSeeTransactions,
+    },
+    {
+      id: 'receipts',
+      label: 'Receipts',
+      icon: Receipt,
+      visible: access.canSeeReceipts,
+    },
+    {
+      id: 'reports',
+      label: 'Reports',
+      icon: BarChart3,
+      visible: access.canSeeReports,
+    },
+    {
+      id: 'settings',
+      label: 'Settings',
+      icon: Settings,
+      visible: access.canSeeSettings,
+    },
   ];
 
   const filteredNavItems = navItems.filter((item) => item.visible);
@@ -134,6 +195,7 @@ export function Sidebar({ currentView, setCurrentView, onLogout }: SidebarProps)
           return (
             <button
               key={item.id}
+              type="button"
               onClick={() => setCurrentView(item.id)}
               className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-colors ${
                 isActive
@@ -150,6 +212,7 @@ export function Sidebar({ currentView, setCurrentView, onLogout }: SidebarProps)
 
       <div className="p-4 border-t border-brand-navy-light">
         <button
+          type="button"
           onClick={onLogout}
           className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-gray-400 hover:bg-brand-navy-light hover:text-white transition-colors"
         >
