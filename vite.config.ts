@@ -19,6 +19,18 @@ export default defineConfig(({ mode }) => {
       },
     },
 
+    build: {
+      chunkSizeWarningLimit: 1000,
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            vendor: ['react', 'react-dom'],
+            convex: ['convex/react'],
+          },
+        },
+      },
+    },
+
     server: {
       hmr:
         process.env.DISABLE_HMR !== 'true'
