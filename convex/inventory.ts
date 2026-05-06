@@ -1,0 +1,806 @@
+import { query, mutation } from "./_generated/server";
+import { v } from "convex/values";
+
+const campusValidator = v.union(
+  v.literal("MAIN_SCHOOL"),
+  v.literal("DIGITAL_SCHOOL")
+);
+
+const inventoryCategoryValidator = v.union(
+  v.literal("LUNCH"),
+  v.literal("SNACK"),
+  v.literal("DRINK"),
+  v.literal("FRUIT"),
+  v.literal("TEA"),
+  v.literal("SUPPLY"),
+  v.literal("OTHER")
+);
+
+const movementTypeValidator = v.union(
+  v.literal("STOCK_IN"),
+  v.literal("DISPATCH_OUT"),
+  v.literal("RECEIPT_IN"),
+  v.literal("ADJUSTMENT"),
+  v.literal("KITCHEN_ISSUE"),
+  v.literal("WASTE"),
+  v.literal("LEFTOVER_RETURN")
+);
+
+function makeNow() {
+  return new Date().toISOString();
+}
+
+function cleanText(value: string) {
+  return value.trim();
+}
+
+async function createActivityLog(
+  ctx: any,
+  args: {
+    actionType:
+      | "INVENTORY_ITEM_CREATED"
+      | "INVENTORY_STOCK_IN"
+      | "INVENTORY_DISPATCH_OUT"
+      | "INVENTORY_RECEIPT_IN"
+      | "INVENTORY_ADJUSTMENT"
+      | "INVENTORY_KITCHEN_ISSUE"
+      | "INVENTORY_WASTE_RECORDED"
+      | "INVENTORY_LEFTOVER_RETURNED";
+    inventoryItemId?: any;
+    itemName?: string | null;
+    actor?: string | null;
+    details?: string | null;
+    sourceCampusCode?: "MAIN_SCHOOL" | "DIGITAL_SCHOOL" | null;
+    targetCampusCode?: "MAIN_SCHOOL" | "DIGITAL_SCHOOL" | null;
+    quantity?: number | null;
+    amount?: number | null;
+  }
+) {
+  await ctx.db.insert("activityLogs", {
+    actionType: args.actionType,
+
+    studentId: null,
+    studentAdmNo: null,
+    studentNameSnapshot: null,
+    classSnapshot: null,
+
+    itemName: args.itemName ?? null,
+    points: null,
+    receiptReference: null,
+
+    actor: args.actor ?? null,
+    details: args.details ?? null,
+
+    orderId: null,
+    inventoryItemId: args.inventoryItemId ?? null,
+    purchaseBatchId: null,
+    kitchenIssueId: null,
+    kitchenClosingId: null,
+
+    sourceCampusCode: args.sourceCampusCode ?? null,
+    targetCampusCode: args.targetCampusCode ?? null,
+
+    quantity: args.quantity ?? null,
+    amount: args.amount ?? null,
+
+    createdAt: makeNow(),
+  });
+}
+
+/**
+ * 🔹 LIST INVENTORY ITEMS
+ */
+export const listItems = query({
+  args: {
+    campusCode: v.optional(campusValidator),
+    category: v.optional(inventoryCategoryValidator),
+    activeOnly: v.optional(v.boolean()),
+    search: v.optional(v.string()),
+  },
+
+  handler: async (ctx, args) => {
+    let items = await ctx.db.query("inventoryItems").collect();
+
+    if (args.campusCode) {
+      items = items.filter((item) => item.campusCode === args.campusCode);
+    }
+
+    if (args.category) {
+      items = items.filter((item) => item.category === args.category);
+    }
+
+    if (args.activeOnly) {
+      items = items.filter((item) => item.isActive);
+    }
+
+    if (args.search?.trim()) {
+      const term = args.search.trim().toLowerCase();
+
+      items = items.filter(
+        (item) =>
+          item.name.toLowerCase().includes(term) ||
+          item.unit.toLowerCase().includes(term) ||
+          item.category.toLowerCase().includes(term)
+      );
+    }
+
+    return items
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((item) => ({
+        _id: item._id,
+        name: item.name,
+        category: item.category,
+        unit: item.unit,
+        campusCode: item.campusCode,
+        currentStock: item.currentStock,
+        reorderLevel: item.reorderLevel,
+        isActive: item.isActive,
+        averageUnitCost: item.averageUnitCost ?? 0,
+        lastUnitCost: item.lastUnitCost ?? 0,
+        lastPurchaseDate: item.lastPurchaseDate ?? null,
+        stockValue:
+          item.currentStock *
+          (item.averageUnitCost ?? item.lastUnitCost ?? 0),
+        isLowStock: item.currentStock <= item.reorderLevel,
+        createdAt: item.createdAt,
+        updatedAt: item.updatedAt,
+      }));
+  },
+});
+
+/**
+ * 🔹 GET ONE INVENTORY ITEM
+ */
+export const getItem = query({
+  args: {
+    inventoryItemId: v.id("inventoryItems"),
+  },
+
+  handler: async (ctx, { inventoryItemId }) => {
+    const item = await ctx.db.get(inventoryItemId);
+
+    if (!item) return null;
+
+    return {
+      _id: item._id,
+      name: item.name,
+      category: item.category,
+      unit: item.unit,
+      campusCode: item.campusCode,
+      currentStock: item.currentStock,
+      reorderLevel: item.reorderLevel,
+      isActive: item.isActive,
+      averageUnitCost: item.averageUnitCost ?? 0,
+      lastUnitCost: item.lastUnitCost ?? 0,
+      lastPurchaseDate: item.lastPurchaseDate ?? null,
+      stockValue:
+        item.currentStock *
+        (item.averageUnitCost ?? item.lastUnitCost ?? 0),
+      isLowStock: item.currentStock <= item.reorderLevel,
+      createdAt: item.createdAt,
+      updatedAt: item.updatedAt,
+    };
+  },
+});
+
+/**
+ * 🔹 LOW STOCK ITEMS
+ */
+export const listLowStock = query({
+  args: {
+    campusCode: v.optional(campusValidator),
+  },
+
+  handler: async (ctx, args) => {
+    let items = await ctx.db.query("inventoryItems").collect();
+
+    if (args.campusCode) {
+      items = items.filter((item) => item.campusCode === args.campusCode);
+    }
+
+    return items
+      .filter((item) => item.isActive && item.currentStock <= item.reorderLevel)
+      .sort((a, b) => a.currentStock - b.currentStock)
+      .map((item) => ({
+        _id: item._id,
+        name: item.name,
+        category: item.category,
+        unit: item.unit,
+        campusCode: item.campusCode,
+        currentStock: item.currentStock,
+        reorderLevel: item.reorderLevel,
+        shortage: Math.max(item.reorderLevel - item.currentStock, 0),
+      }));
+  },
+});
+
+/**
+ * 🔹 CREATE INVENTORY ITEM
+ */
+export const createItem = mutation({
+  args: {
+    name: v.string(),
+    category: inventoryCategoryValidator,
+    unit: v.string(),
+    campusCode: campusValidator,
+    currentStock: v.optional(v.number()),
+    reorderLevel: v.optional(v.number()),
+    averageUnitCost: v.optional(v.number()),
+    actor: v.optional(v.string()),
+    notes: v.optional(v.string()),
+  },
+
+  handler: async (ctx, args) => {
+    const name = cleanText(args.name);
+    const unit = cleanText(args.unit);
+
+    if (!name) {
+      throw new Error("Inventory item name is required.");
+    }
+
+    if (!unit) {
+      throw new Error("Inventory unit is required.");
+    }
+
+    const now = makeNow();
+
+    const existing = await ctx.db
+      .query("inventoryItems")
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("name"), name),
+          q.eq(q.field("campusCode"), args.campusCode)
+        )
+      )
+      .first();
+
+    if (existing) {
+      throw new Error(
+        `Inventory item "${name}" already exists for ${args.campusCode}.`
+      );
+    }
+
+    const openingStock = args.currentStock ?? 0;
+    const averageUnitCost = args.averageUnitCost ?? 0;
+
+    if (openingStock < 0) {
+      throw new Error("Opening stock cannot be negative.");
+    }
+
+    if ((args.reorderLevel ?? 0) < 0) {
+      throw new Error("Reorder level cannot be negative.");
+    }
+
+    if (averageUnitCost < 0) {
+      throw new Error("Average unit cost cannot be negative.");
+    }
+
+    const inventoryItemId = await ctx.db.insert("inventoryItems", {
+      name,
+      category: args.category,
+      unit,
+      campusCode: args.campusCode,
+      currentStock: openingStock,
+      reorderLevel: args.reorderLevel ?? 0,
+      isActive: true,
+      averageUnitCost,
+      lastUnitCost: averageUnitCost,
+      lastPurchaseDate: null,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    if (openingStock > 0) {
+      await ctx.db.insert("inventoryMovements", {
+        inventoryItemId,
+        movementType: "STOCK_IN",
+        quantity: openingStock,
+        orderId: null,
+        purchaseBatchId: null,
+        kitchenIssueId: null,
+        kitchenClosingId: null,
+        sourceCampusCode: null,
+        targetCampusCode: args.campusCode,
+        unitCost: averageUnitCost,
+        totalCost: openingStock * averageUnitCost,
+        createdByUserId: null,
+        createdAt: now,
+        notes: args.notes ?? "Opening stock",
+      });
+    }
+
+    await createActivityLog(ctx, {
+      actionType: "INVENTORY_ITEM_CREATED",
+      inventoryItemId,
+      itemName: name,
+      actor: args.actor ?? null,
+      details: args.notes ?? `Created inventory item ${name}`,
+      targetCampusCode: args.campusCode,
+      quantity: openingStock,
+      amount: openingStock * averageUnitCost,
+    });
+
+    return {
+      success: true,
+      inventoryItemId,
+    };
+  },
+});
+
+/**
+ * 🔹 UPDATE INVENTORY ITEM DETAILS
+ */
+export const updateItem = mutation({
+  args: {
+    inventoryItemId: v.id("inventoryItems"),
+    name: v.optional(v.string()),
+    category: v.optional(inventoryCategoryValidator),
+    unit: v.optional(v.string()),
+    reorderLevel: v.optional(v.number()),
+    isActive: v.optional(v.boolean()),
+    actor: v.optional(v.string()),
+    notes: v.optional(v.string()),
+  },
+
+  handler: async (ctx, args) => {
+    const item = await ctx.db.get(args.inventoryItemId);
+
+    if (!item) {
+      throw new Error("Inventory item not found.");
+    }
+
+    const patch: any = {
+      updatedAt: makeNow(),
+    };
+
+    if (args.name !== undefined) {
+      const name = cleanText(args.name);
+
+      if (!name) {
+        throw new Error("Inventory item name cannot be empty.");
+      }
+
+      patch.name = name;
+    }
+
+    if (args.category !== undefined) {
+      patch.category = args.category;
+    }
+
+    if (args.unit !== undefined) {
+      const unit = cleanText(args.unit);
+
+      if (!unit) {
+        throw new Error("Unit cannot be empty.");
+      }
+
+      patch.unit = unit;
+    }
+
+    if (args.reorderLevel !== undefined) {
+      if (args.reorderLevel < 0) {
+        throw new Error("Reorder level cannot be negative.");
+      }
+
+      patch.reorderLevel = args.reorderLevel;
+    }
+
+    if (args.isActive !== undefined) {
+      patch.isActive = args.isActive;
+    }
+
+    await ctx.db.patch(args.inventoryItemId, patch);
+
+    await createActivityLog(ctx, {
+      actionType: "INVENTORY_ADJUSTMENT",
+      inventoryItemId: args.inventoryItemId,
+      itemName: patch.name ?? item.name,
+      actor: args.actor ?? null,
+      details: args.notes ?? "Updated inventory item details",
+      targetCampusCode: item.campusCode,
+      quantity: null,
+      amount: null,
+    });
+
+    return {
+      success: true,
+      inventoryItemId: args.inventoryItemId,
+    };
+  },
+});
+
+/**
+ * 🔹 STOCK IN
+ *
+ * Use this for manual stock additions.
+ * Purchase approval will also create stock-in movements later.
+ */
+export const stockIn = mutation({
+  args: {
+    inventoryItemId: v.id("inventoryItems"),
+    quantity: v.number(),
+    unitCost: v.optional(v.number()),
+    actor: v.optional(v.string()),
+    notes: v.optional(v.string()),
+  },
+
+  handler: async (ctx, args) => {
+    const item = await ctx.db.get(args.inventoryItemId);
+
+    if (!item) {
+      throw new Error("Inventory item not found.");
+    }
+
+    if (args.quantity <= 0) {
+      throw new Error("Stock-in quantity must be greater than zero.");
+    }
+
+    const now = makeNow();
+    const unitCost = args.unitCost ?? item.lastUnitCost ?? item.averageUnitCost ?? 0;
+
+    if (unitCost < 0) {
+      throw new Error("Unit cost cannot be negative.");
+    }
+
+    const oldStock = item.currentStock;
+    const newStock = oldStock + args.quantity;
+
+    const oldAverage = item.averageUnitCost ?? item.lastUnitCost ?? 0;
+    const oldValue = oldStock * oldAverage;
+    const addedValue = args.quantity * unitCost;
+    const newAverage =
+      newStock > 0 ? (oldValue + addedValue) / newStock : unitCost;
+
+    await ctx.db.patch(args.inventoryItemId, {
+      currentStock: newStock,
+      averageUnitCost: newAverage,
+      lastUnitCost: unitCost,
+      lastPurchaseDate: now,
+      updatedAt: now,
+    });
+
+    await ctx.db.insert("inventoryMovements", {
+      inventoryItemId: args.inventoryItemId,
+      movementType: "STOCK_IN",
+      quantity: args.quantity,
+      orderId: null,
+      purchaseBatchId: null,
+      kitchenIssueId: null,
+      kitchenClosingId: null,
+      sourceCampusCode: null,
+      targetCampusCode: item.campusCode,
+      unitCost,
+      totalCost: args.quantity * unitCost,
+      createdByUserId: null,
+      createdAt: now,
+      notes: args.notes ?? null,
+    });
+
+    await createActivityLog(ctx, {
+      actionType: "INVENTORY_STOCK_IN",
+      inventoryItemId: args.inventoryItemId,
+      itemName: item.name,
+      actor: args.actor ?? null,
+      details:
+        args.notes ??
+        `Stock in: ${args.quantity} ${item.unit} of ${item.name}`,
+      targetCampusCode: item.campusCode,
+      quantity: args.quantity,
+      amount: args.quantity * unitCost,
+    });
+
+    return {
+      success: true,
+      inventoryItemId: args.inventoryItemId,
+      previousStock: oldStock,
+      newStock,
+      unitCost,
+      totalCost: args.quantity * unitCost,
+    };
+  },
+});
+
+/**
+ * 🔹 MANUAL STOCK ADJUSTMENT
+ *
+ * Sets the stock to an exact number and records the difference.
+ */
+export const adjustStock = mutation({
+  args: {
+    inventoryItemId: v.id("inventoryItems"),
+    newStock: v.number(),
+    actor: v.optional(v.string()),
+    notes: v.optional(v.string()),
+  },
+
+  handler: async (ctx, args) => {
+    const item = await ctx.db.get(args.inventoryItemId);
+
+    if (!item) {
+      throw new Error("Inventory item not found.");
+    }
+
+    if (args.newStock < 0) {
+      throw new Error("New stock cannot be negative.");
+    }
+
+    const now = makeNow();
+    const previousStock = item.currentStock;
+    const difference = args.newStock - previousStock;
+    const unitCost = item.averageUnitCost ?? item.lastUnitCost ?? 0;
+
+    await ctx.db.patch(args.inventoryItemId, {
+      currentStock: args.newStock,
+      updatedAt: now,
+    });
+
+    await ctx.db.insert("inventoryMovements", {
+      inventoryItemId: args.inventoryItemId,
+      movementType: "ADJUSTMENT",
+      quantity: difference,
+      orderId: null,
+      purchaseBatchId: null,
+      kitchenIssueId: null,
+      kitchenClosingId: null,
+      sourceCampusCode: item.campusCode,
+      targetCampusCode: item.campusCode,
+      unitCost,
+      totalCost: difference * unitCost,
+      createdByUserId: null,
+      createdAt: now,
+      notes: args.notes ?? null,
+    });
+
+    await createActivityLog(ctx, {
+      actionType: "INVENTORY_ADJUSTMENT",
+      inventoryItemId: args.inventoryItemId,
+      itemName: item.name,
+      actor: args.actor ?? null,
+      details:
+        args.notes ??
+        `Adjusted stock from ${previousStock} to ${args.newStock}`,
+      sourceCampusCode: item.campusCode,
+      targetCampusCode: item.campusCode,
+      quantity: difference,
+      amount: difference * unitCost,
+    });
+
+    return {
+      success: true,
+      inventoryItemId: args.inventoryItemId,
+      previousStock,
+      newStock: args.newStock,
+      difference,
+    };
+  },
+});
+
+/**
+ * 🔹 RECORD WASTE
+ *
+ * Deducts stock and records it as waste.
+ */
+export const recordWaste = mutation({
+  args: {
+    inventoryItemId: v.id("inventoryItems"),
+    quantity: v.number(),
+    actor: v.optional(v.string()),
+    notes: v.optional(v.string()),
+  },
+
+  handler: async (ctx, args) => {
+    const item = await ctx.db.get(args.inventoryItemId);
+
+    if (!item) {
+      throw new Error("Inventory item not found.");
+    }
+
+    if (args.quantity <= 0) {
+      throw new Error("Waste quantity must be greater than zero.");
+    }
+
+    if (args.quantity > item.currentStock) {
+      throw new Error(
+        `Cannot record waste of ${args.quantity}. Only ${item.currentStock} ${item.unit} available.`
+      );
+    }
+
+    const now = makeNow();
+    const unitCost = item.averageUnitCost ?? item.lastUnitCost ?? 0;
+    const newStock = item.currentStock - args.quantity;
+
+    await ctx.db.patch(args.inventoryItemId, {
+      currentStock: newStock,
+      updatedAt: now,
+    });
+
+    await ctx.db.insert("inventoryMovements", {
+      inventoryItemId: args.inventoryItemId,
+      movementType: "WASTE",
+      quantity: -Math.abs(args.quantity),
+      orderId: null,
+      purchaseBatchId: null,
+      kitchenIssueId: null,
+      kitchenClosingId: null,
+      sourceCampusCode: item.campusCode,
+      targetCampusCode: null,
+      unitCost,
+      totalCost: args.quantity * unitCost,
+      createdByUserId: null,
+      createdAt: now,
+      notes: args.notes ?? null,
+    });
+
+    await createActivityLog(ctx, {
+      actionType: "INVENTORY_WASTE_RECORDED",
+      inventoryItemId: args.inventoryItemId,
+      itemName: item.name,
+      actor: args.actor ?? null,
+      details:
+        args.notes ??
+        `Recorded waste: ${args.quantity} ${item.unit} of ${item.name}`,
+      sourceCampusCode: item.campusCode,
+      quantity: args.quantity,
+      amount: args.quantity * unitCost,
+    });
+
+    return {
+      success: true,
+      inventoryItemId: args.inventoryItemId,
+      previousStock: item.currentStock,
+      newStock,
+      wasteCost: args.quantity * unitCost,
+    };
+  },
+});
+
+/**
+ * 🔹 LIST INVENTORY MOVEMENTS
+ */
+export const listMovements = query({
+  args: {
+    inventoryItemId: v.optional(v.id("inventoryItems")),
+    orderId: v.optional(v.id("campusOrders")),
+    purchaseBatchId: v.optional(v.id("purchaseBatches")),
+    kitchenIssueId: v.optional(v.id("kitchenIssues")),
+    kitchenClosingId: v.optional(v.id("dailyKitchenClosings")),
+    movementType: v.optional(movementTypeValidator),
+    limit: v.optional(v.number()),
+  },
+
+  handler: async (ctx, args) => {
+    const limit = Math.min(args.limit ?? 100, 300);
+
+    let movements;
+
+    if (args.inventoryItemId) {
+      movements = await ctx.db
+        .query("inventoryMovements")
+        .withIndex("by_inventoryItemId", (q) =>
+          q.eq("inventoryItemId", args.inventoryItemId!)
+        )
+        .order("desc")
+        .take(limit);
+    } else if (args.orderId) {
+      movements = await ctx.db
+        .query("inventoryMovements")
+        .withIndex("by_orderId", (q) => q.eq("orderId", args.orderId!))
+        .order("desc")
+        .take(limit);
+    } else if (args.purchaseBatchId) {
+      movements = await ctx.db
+        .query("inventoryMovements")
+        .withIndex("by_purchaseBatchId", (q) =>
+          q.eq("purchaseBatchId", args.purchaseBatchId!)
+        )
+        .order("desc")
+        .take(limit);
+    } else if (args.kitchenIssueId) {
+      movements = await ctx.db
+        .query("inventoryMovements")
+        .withIndex("by_kitchenIssueId", (q) =>
+          q.eq("kitchenIssueId", args.kitchenIssueId!)
+        )
+        .order("desc")
+        .take(limit);
+    } else if (args.kitchenClosingId) {
+      movements = await ctx.db
+        .query("inventoryMovements")
+        .withIndex("by_kitchenClosingId", (q) =>
+          q.eq("kitchenClosingId", args.kitchenClosingId!)
+        )
+        .order("desc")
+        .take(limit);
+    } else {
+      movements = await ctx.db
+        .query("inventoryMovements")
+        .withIndex("by_createdAt")
+        .order("desc")
+        .take(limit);
+    }
+
+    if (args.movementType) {
+      movements = movements.filter(
+        (movement) => movement.movementType === args.movementType
+      );
+    }
+
+    const enriched = await Promise.all(
+      movements.map(async (movement) => {
+        const item = await ctx.db.get(movement.inventoryItemId);
+
+        return {
+          ...movement,
+          itemName: item?.name ?? "Unknown item",
+          itemCategory: item?.category ?? null,
+          itemUnit: item?.unit ?? null,
+          campusCode: item?.campusCode ?? null,
+        };
+      })
+    );
+
+    return enriched;
+  },
+});
+
+/**
+ * 🔹 INVENTORY SUMMARY
+ */
+export const getSummary = query({
+  args: {
+    campusCode: v.optional(campusValidator),
+  },
+
+  handler: async (ctx, args) => {
+    let items = await ctx.db.query("inventoryItems").collect();
+
+    if (args.campusCode) {
+      items = items.filter((item) => item.campusCode === args.campusCode);
+    }
+
+    const activeItems = items.filter((item) => item.isActive);
+    const lowStockItems = activeItems.filter(
+      (item) => item.currentStock <= item.reorderLevel
+    );
+
+    const totalStockValue = activeItems.reduce((sum, item) => {
+      const unitCost = item.averageUnitCost ?? item.lastUnitCost ?? 0;
+      return sum + item.currentStock * unitCost;
+    }, 0);
+
+    const byCategory = activeItems.reduce(
+      (acc: Record<string, { count: number; stockValue: number }>, item) => {
+        if (!acc[item.category]) {
+          acc[item.category] = {
+            count: 0,
+            stockValue: 0,
+          };
+        }
+
+        acc[item.category].count += 1;
+        acc[item.category].stockValue +=
+          item.currentStock * (item.averageUnitCost ?? item.lastUnitCost ?? 0);
+
+        return acc;
+      },
+      {}
+    );
+
+    return {
+      totalItems: items.length,
+      activeItems: activeItems.length,
+      lowStockCount: lowStockItems.length,
+      totalStockValue,
+      byCategory,
+      lowStockItems: lowStockItems.map((item) => ({
+        _id: item._id,
+        name: item.name,
+        category: item.category,
+        unit: item.unit,
+        campusCode: item.campusCode,
+        currentStock: item.currentStock,
+        reorderLevel: item.reorderLevel,
+      })),
+    };
+  },
+});
