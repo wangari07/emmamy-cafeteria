@@ -102,7 +102,14 @@ function formatDate(value?: string | null) {
 
 export function Purchases() {
   const { user } = useAuth();
-  const appUserId = (user as any)?._id as Id<'appUsers'> | undefined;
+
+  const appUserId = (
+    (user as any)?._id ||
+    (user as any)?.id ||
+    (user as any)?.userId ||
+    (user as any)?.appUserId
+  ) as Id<'appUsers'> | undefined;
+
   const actor = user?.name || user?.email || 'Unknown user';
 
   const defaultCampus = userCampusToInventoryCampus(user?.school);
@@ -179,6 +186,20 @@ export function Purchases() {
     setSelectedBatchId(batchId);
     setShowAddItemModal(true);
     setMessage(null);
+  };
+
+  const handleNewBatchClick = () => {
+    setMessage(null);
+
+    if (!appUserId) {
+      setMessage({
+        type: 'error',
+        text: 'Your user ID is missing from the login session. We need to fix AuthContext next.',
+      });
+      return;
+    }
+
+    setShowCreateBatchModal(true);
   };
 
   const handleMarkReviewed = async (batchId: Id<'purchaseBatches'>) => {
@@ -288,10 +309,7 @@ export function Purchases() {
         </div>
 
         <button
-          onClick={() => {
-            setShowCreateBatchModal(true);
-            setMessage(null);
-          }}
+          onClick={handleNewBatchClick}
           className="px-4 py-2 bg-brand-primary text-brand-navy rounded-xl text-sm font-semibold hover:bg-brand-primary-hover transition-colors flex items-center gap-2"
         >
           <Plus size={18} />
@@ -304,7 +322,7 @@ export function Purchases() {
           <AlertTriangle size={20} className="shrink-0 mt-0.5" />
           <p className="text-sm font-medium">
             I cannot find your app user ID in the login context. Creating and approving purchases needs this ID.
-            If buttons fail, we’ll fix the AuthContext user object next.
+            If buttons fail, we’ll fix AuthContext next.
           </p>
         </div>
       )}

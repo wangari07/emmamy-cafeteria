@@ -7,6 +7,7 @@ import React, {
 } from 'react';
 import { useConvex } from 'convex/react';
 import { api } from '../../convex/_generated/api';
+import type { Id } from '../../convex/_generated/dataModel';
 
 export type Role =
   | 'super_admin'
@@ -29,7 +30,14 @@ export interface Permissions {
 }
 
 export interface User {
-  id: string;
+  /**
+   * Convex document ID for appUsers table.
+   * We keep all three fields so older pages and newer pages can safely read it.
+   */
+  _id: Id<'appUsers'>;
+  id: Id<'appUsers'>;
+  appUserId: Id<'appUsers'>;
+
   name: string;
   staff_id: string;
   email: string;
@@ -42,7 +50,7 @@ export interface User {
 
 interface AuthContextType {
   user: User | null;
-  login: (email: string) => Promise<boolean>; // Changed to handle direct login
+  login: (email: string) => Promise<boolean>;
   logout: () => void;
   hasPermission: (permission: keyof Permissions) => boolean;
   loading: boolean;
@@ -63,17 +71,63 @@ const emptyPermissions: Permissions = {
   viewFullHistory: false,
 };
 
-// Map Convex data to our App User interface
-function mapToContextUser(appUser: any): User {
+function normalizePermissions(permissions: Partial<Permissions> | undefined): Permissions {
   return {
-    id: appUser?._id || '',
+    ...emptyPermissions,
+    ...(permissions || {}),
+  };
+}
+
+function normalizeSchool(value: any): 'main' | 'digital' | 'both' {
+  if (value === 'digital') return 'digital';
+  if (value === 'both') return 'both';
+  return 'main';
+}
+
+function normalizeRole(value: any): Role {
+  if (
+    value === 'super_admin' ||
+    value === 'admin' ||
+    value === 'manager' ||
+    value === 'staff' ||
+    value === 'teacher' ||
+    value === 'headteacher'
+  ) {
+    return value;
+  }
+
+  return 'staff';
+}
+
+function normalizeStatus(value: any): 'active' | 'pending' | 'deactivated' {
+  if (value === 'active' || value === 'pending' || value === 'deactivated') {
+    return value;
+  }
+
+  return 'pending';
+}
+
+// Map Convex appUsers document to frontend auth user.
+function mapToContextUser(appUser: any): User | null {
+  const convexUserId = appUser?._id || appUser?.id || appUser?.appUserId;
+
+  if (!convexUserId) {
+    console.error('AuthContext: appUser is missing Convex _id/id/appUserId:', appUser);
+    return null;
+  }
+
+  return {
+    _id: convexUserId,
+    id: convexUserId,
+    appUserId: convexUserId,
+
     name: appUser?.name || '',
     staff_id: appUser?.staff_id || '',
     email: appUser?.email || '',
-    school: appUser?.school || 'main',
-    role: appUser?.role || 'staff',
-    status: appUser?.status || 'pending',
-    permissions: appUser?.permissions || emptyPermissions,
+    school: normalizeSchool(appUser?.school),
+    role: normalizeRole(appUser?.role),
+    status: normalizeStatus(appUser?.status),
+    permissions: normalizePermissions(appUser?.permissions),
     class_assigned: appUser?.class_assigned,
   };
 }
@@ -86,8 +140,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const refreshUser = async () => {
     try {
       setLoading(true);
-      
-      // Look for a saved email in the browser's storage
+
       const savedEmail = localStorage.getItem('cafeteria_user_email');
 
       if (!savedEmail) {
@@ -95,18 +148,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      // Query Convex directly using the email
       const appUser = await convex.query(api.appUsers.getUserProfileByEmail, {
         email: savedEmail.trim().toLowerCase(),
       });
 
-      if (appUser) {
-        setUser(mapToContextUser(appUser));
-      } else {
-        // If email exists but user not found in Convex, clear storage
+      if (!appUser) {
         localStorage.removeItem('cafeteria_user_email');
+        localStorage.removeItem('cafeteria_app_user_id');
         setUser(null);
+        return;
       }
+
+      const mappedUser = mapToContextUser(appUser);
+
+      if (!mappedUser) {
+        localStorage.removeItem('cafeteria_user_email');
+        localStorage.removeItem('cafeteria_app_user_id');
+        setUser(null);
+        return;
+      }
+
+      localStorage.setItem('cafeteria_user_email', mappedUser.email);
+      localStorage.setItem('cafeteria_app_user_id', mappedUser.id);
+
+      setUser(mappedUser);
     } catch (error) {
       console.error('Auth Refresh Error:', error);
       setUser(null);
@@ -117,24 +182,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     refreshUser();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /**
-   * Login function that checks Convex and saves session locally
-   */
   const login = async (email: string) => {
     try {
       setLoading(true);
+
       const appUser = await convex.query(api.appUsers.getUserProfileByEmail, {
         email: email.trim().toLowerCase(),
       });
 
-      if (appUser) {
-        localStorage.setItem('cafeteria_user_email', appUser.email);
-        setUser(mapToContextUser(appUser));
-        return true;
+      if (!appUser) {
+        return false;
       }
-      return false;
+
+      const mappedUser = mapToContextUser(appUser);
+
+      if (!mappedUser) {
+        return false;
+      }
+
+      localStorage.setItem('cafeteria_user_email', mappedUser.email);
+      localStorage.setItem('cafeteria_app_user_id', mappedUser.id);
+
+      setUser(mappedUser);
+
+      return true;
     } catch (error) {
       console.error('Login Error:', error);
       return false;
@@ -145,13 +219,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = () => {
     localStorage.removeItem('cafeteria_user_email');
+    localStorage.removeItem('cafeteria_app_user_id');
     setUser(null);
   };
 
   const hasPermission = (permission: keyof Permissions) => {
     if (!user) return false;
-    // Admins bypass all permission checks
-    if (user.role === 'super_admin' || user.role === 'admin') return true;
+
+    if (user.role === 'super_admin' || user.role === 'admin') {
+      return true;
+    }
+
     return user.permissions?.[permission] === true;
   };
 
@@ -173,8 +251,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 export function useAuth() {
   const context = useContext(AuthContext);
+
   if (context === undefined) {
     throw new Error('useAuth must be used within an AuthProvider');
   }
+
   return context;
 }
