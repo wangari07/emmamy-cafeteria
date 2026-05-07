@@ -5,6 +5,8 @@ import { Header } from './components/Header';
 import { Dashboard } from './views/Dashboard';
 import { Inventory } from './views/Inventory';
 import { Purchases } from './views/Purchases';
+import { Kitchen } from './views/Kitchen';
+import { CampusOrders } from './views/CampusOrders';
 import { Students } from './views/Students';
 import { StudentAccountManager } from './views/StudentAccountManager';
 import { Settings } from './views/Settings';
@@ -61,6 +63,8 @@ function App() {
         canSeeMealCards: false,
         canSeeInventory: false,
         canSeePurchases: false,
+        canSeeKitchen: false,
+        canSeeCampusOrders: false,
         canSeeMenu: false,
         canSeeTransactions: false,
         canSeeReceipts: false,
@@ -101,6 +105,16 @@ function App() {
         user.role === 'staff',
 
       canSeePurchases:
+        isAdminLike ||
+        user.role === 'manager' ||
+        user.role === 'staff',
+
+      canSeeKitchen:
+        isAdminLike ||
+        user.role === 'manager' ||
+        user.role === 'staff',
+
+      canSeeCampusOrders:
         isAdminLike ||
         user.role === 'manager' ||
         user.role === 'staff',
@@ -231,6 +245,12 @@ function App() {
 
       case 'purchases':
         return access.canSeePurchases ? <Purchases /> : <AccessDenied />;
+
+      case 'kitchen':
+        return access.canSeeKitchen ? <Kitchen /> : <AccessDenied />;
+
+      case 'campus-orders':
+        return access.canSeeCampusOrders ? <CampusOrders /> : <AccessDenied />;
 
       case 'menu':
         return access.canSeeMenu ? <MenuPlanner /> : <AccessDenied />;

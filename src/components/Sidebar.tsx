@@ -14,6 +14,8 @@ import {
   Utensils,
   UserCog,
   ShoppingCart,
+  ChefHat,
+  Truck,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -35,6 +37,8 @@ export function Sidebar({ currentView, setCurrentView, onLogout }: SidebarProps)
         canSeeMealCards: false,
         canSeeInventory: false,
         canSeePurchases: false,
+        canSeeKitchen: false,
+        canSeeCampusOrders: false,
         canSeeMenu: false,
         canSeeTransactions: false,
         canSeeReceipts: false,
@@ -73,6 +77,16 @@ export function Sidebar({ currentView, setCurrentView, onLogout }: SidebarProps)
         user.role === 'staff',
 
       canSeePurchases:
+        isAdminLike ||
+        user.role === 'manager' ||
+        user.role === 'staff',
+
+      canSeeKitchen:
+        isAdminLike ||
+        user.role === 'manager' ||
+        user.role === 'staff',
+
+      canSeeCampusOrders:
         isAdminLike ||
         user.role === 'manager' ||
         user.role === 'staff',
@@ -156,6 +170,18 @@ export function Sidebar({ currentView, setCurrentView, onLogout }: SidebarProps)
       label: 'Purchases',
       icon: ShoppingCart,
       visible: access.canSeePurchases,
+    },
+    {
+      id: 'kitchen',
+      label: 'Kitchen',
+      icon: ChefHat,
+      visible: access.canSeeKitchen,
+    },
+    {
+      id: 'campus-orders',
+      label: 'Campus Orders',
+      icon: Truck,
+      visible: access.canSeeCampusOrders,
     },
     {
       id: 'menu',
