@@ -126,16 +126,6 @@ export function Kitchen() {
     selectedClosingId ? { closingId: selectedClosingId } : 'skip'
   );
 
-  const summary = useQuery(
-    api.kitchen.getDailySummary,
-    campusFilter === 'All'
-      ? 'skip'
-      : {
-          campusCode: campusFilter,
-          date: dateFilter || todayDate(),
-        }
-  );
-
   const inventoryItems = useQuery(api.inventory.listItems, {
     campusCode:
       selectedIssue?.campusCode ||
@@ -328,13 +318,21 @@ export function Kitchen() {
   const issuedCount = filteredIssues.filter((issue) => issue.status === 'ISSUED').length;
   const receivedCount = filteredIssues.filter((issue) => issue.status === 'RECEIVED').length;
 
+  const selectedSummaryDate = dateFilter || todayDate();
+
+  const matchingClosing = (closings ?? []).find(
+    (closing) =>
+      closing.closingDate === selectedSummaryDate &&
+      (campusFilter === 'All' || closing.campusCode === campusFilter)
+  );
+
   const servedToday =
     campusFilter === 'All'
       ? '—'
-      : (summary?.lunchServedCount ?? 0) +
-        (summary?.teaServedCount ?? 0) +
-        (summary?.snackServedCount ?? 0) +
-        (summary?.fruitServedCount ?? 0);
+      : (matchingClosing?.lunchServedCount ?? 0) +
+        (matchingClosing?.teaServedCount ?? 0) +
+        (matchingClosing?.snackServedCount ?? 0) +
+        (matchingClosing?.fruitServedCount ?? 0);
 
   return (
     <div className="p-8 space-y-8">
@@ -428,7 +426,7 @@ export function Kitchen() {
           subtext={
             campusFilter === 'All'
               ? 'Select a campus'
-              : `Using ${dateFilter || todayDate()}`
+              : `Using ${selectedSummaryDate}`
           }
         />
       </div>
