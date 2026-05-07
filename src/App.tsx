@@ -4,6 +4,7 @@ import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { Dashboard } from './views/Dashboard';
 import { Inventory } from './views/Inventory';
+import { Purchases } from './views/Purchases';
 import { Students } from './views/Students';
 import { StudentAccountManager } from './views/StudentAccountManager';
 import { Settings } from './views/Settings';
@@ -59,6 +60,7 @@ function App() {
         canManageStudentAccounts: false,
         canSeeMealCards: false,
         canSeeInventory: false,
+        canSeePurchases: false,
         canSeeMenu: false,
         canSeeTransactions: false,
         canSeeReceipts: false,
@@ -94,6 +96,11 @@ function App() {
         user.permissions.markMealsServed,
 
       canSeeInventory:
+        isAdminLike ||
+        user.role === 'manager' ||
+        user.role === 'staff',
+
+      canSeePurchases:
         isAdminLike ||
         user.role === 'manager' ||
         user.role === 'staff',
@@ -221,6 +228,9 @@ function App() {
 
       case 'inventory':
         return access.canSeeInventory ? <Inventory /> : <AccessDenied />;
+
+      case 'purchases':
+        return access.canSeePurchases ? <Purchases /> : <AccessDenied />;
 
       case 'menu':
         return access.canSeeMenu ? <MenuPlanner /> : <AccessDenied />;

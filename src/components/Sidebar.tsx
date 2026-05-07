@@ -13,6 +13,7 @@ import {
   Wallet,
   Utensils,
   UserCog,
+  ShoppingCart,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 
@@ -33,6 +34,7 @@ export function Sidebar({ currentView, setCurrentView, onLogout }: SidebarProps)
         canManageStudentAccounts: false,
         canSeeMealCards: false,
         canSeeInventory: false,
+        canSeePurchases: false,
         canSeeMenu: false,
         canSeeTransactions: false,
         canSeeReceipts: false,
@@ -57,7 +59,8 @@ export function Sidebar({ currentView, setCurrentView, onLogout }: SidebarProps)
         user.permissions.viewDigitalStudents ||
         user.permissions.viewAllClasses,
 
-      canManageStudentAccounts: user.role === 'super_admin',
+      canManageStudentAccounts:
+        user.role === 'super_admin',
 
       canSeeMealCards:
         isAdminLike ||
@@ -65,6 +68,11 @@ export function Sidebar({ currentView, setCurrentView, onLogout }: SidebarProps)
         user.permissions.editMealRegistration,
 
       canSeeInventory:
+        isAdminLike ||
+        user.role === 'manager' ||
+        user.role === 'staff',
+
+      canSeePurchases:
         isAdminLike ||
         user.role === 'manager' ||
         user.role === 'staff',
@@ -87,7 +95,8 @@ export function Sidebar({ currentView, setCurrentView, onLogout }: SidebarProps)
         user.permissions.generateReports ||
         user.permissions.viewHistoricalData,
 
-      canSeeSettings: isAdminLike,
+      canSeeSettings:
+        isAdminLike,
 
       canSeePaymentReview:
         isAdminLike ||
@@ -141,6 +150,12 @@ export function Sidebar({ currentView, setCurrentView, onLogout }: SidebarProps)
       label: 'Inventory',
       icon: Package,
       visible: access.canSeeInventory,
+    },
+    {
+      id: 'purchases',
+      label: 'Purchases',
+      icon: ShoppingCart,
+      visible: access.canSeePurchases,
     },
     {
       id: 'menu',
