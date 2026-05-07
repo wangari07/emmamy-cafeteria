@@ -11,7 +11,6 @@ import {
   Package,
   Trash2,
   Archive,
-  Brain,
   CheckCircle2,
 } from 'lucide-react';
 import {
@@ -135,34 +134,21 @@ export function Reports() {
   const weekStartDate = useMemo(() => getWeekStart(selectedDate), [selectedDate]);
   const weekEndDate = useMemo(() => getWeekEnd(weekStartDate), [weekStartDate]);
 
-  const previewReport = useQuery((api.mealReports as any).previewWeeklyReport, {
-    campusCode: selectedCampus,
-    weekStartDate,
-  });
-
   const savedReports = useQuery((api.mealReports as any).listWeeklyReports, {
     campusCode: selectedCampus,
     limit: 20,
   });
 
-  const categoryBreakdown = useQuery(
-    (api.mealReports as any).getWeeklyCategoryBreakdown,
-    {
-      campusCode: selectedCampus,
-      weekStartDate,
-    }
-  );
-
   const generateWeeklyReport = useMutation(
     (api.mealReports as any).generateWeeklyReport
   );
 
-  const loading =
-    previewReport === undefined ||
-    savedReports === undefined ||
-    categoryBreakdown === undefined;
+  const loading = savedReports === undefined;
 
-  const report = previewReport || {};
+  const report =
+    (savedReports ?? []).find((item: any) => item.weekStartDate === weekStartDate) ||
+    (savedReports ?? [])[0] ||
+    {};
 
   const totalPurchases = getValue(report, [
     'totalPurchaseCost',
@@ -178,10 +164,7 @@ export function Reports() {
     'totalIssuedCost',
   ]);
 
-  const wasteCost = getValue(report, [
-    'totalWasteCost',
-    'wasteCost',
-  ]);
+  const wasteCost = getValue(report, ['totalWasteCost', 'wasteCost']);
 
   const leftoverValue = getValue(report, [
     'totalLeftoverValue',
@@ -229,6 +212,8 @@ export function Reports() {
     'systemAlerts',
   ]);
 
+  const categoryRows: any[] = [];
+
   const chartData = [
     {
       name: 'Purchases',
@@ -263,10 +248,6 @@ export function Reports() {
     { name: 'Fruit', value: fruitServed },
   ].filter((item) => item.value > 0);
 
-  const categoryRows = Array.isArray(categoryBreakdown)
-    ? categoryBreakdown
-    : [];
-
   const handleGenerateReport = async () => {
     setMessage(null);
 
@@ -287,14 +268,14 @@ export function Reports() {
 
       setMessage({
         type: 'success',
-        text: 'Weekly profit/loss report generated successfully.',
+        text: 'Weekly profit/loss report generated successfully. Refresh the page if the saved report does not appear immediately.',
       });
     } catch (error: any) {
       setMessage({
         type: 'error',
         text:
           error?.message ||
-          'Failed to generate weekly report. If this is an argument error, paste it here and I will align the frontend to the backend.',
+          'Failed to generate weekly report. Paste the Convex error here and I will align the frontend to the backend.',
       });
     }
   };
@@ -483,6 +464,13 @@ export function Reports() {
             {weekStartDate} to {weekEndDate}
           </span>
         </p>
+
+        {!report?._id && (
+          <p className="text-xs text-brand-text-muted mt-1">
+            No saved report found for this week yet. Click Generate Weekly Report
+            after entering purchases, kitchen issues, and daily closings.
+          </p>
+        )}
       </div>
 
       {message && (
@@ -545,7 +533,7 @@ export function Reports() {
       {aiSummary && (
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
           <div className="flex items-center gap-2 mb-3">
-            <Brain size={20} className="text-brand-primary" />
+            <BarChart3 size={20} className="text-brand-primary" />
             <h3 className="font-bold text-brand-text">Management Summary</h3>
           </div>
 
@@ -634,7 +622,7 @@ export function Reports() {
             Category Breakdown
           </h3>
           <p className="text-sm text-brand-text-muted mt-1">
-            Purchase, issue, waste, or meal category data returned by the backend.
+            This section will be enabled after we repair the live report preview query.
           </p>
         </div>
 
@@ -657,7 +645,7 @@ export function Reports() {
                     colSpan={5}
                     className="px-6 py-10 text-center text-sm text-brand-text-muted"
                   >
-                    No category breakdown available yet.
+                    Category breakdown is temporarily disabled while we fix the backend preview query.
                   </td>
                 </tr>
               ) : (
