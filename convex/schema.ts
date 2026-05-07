@@ -276,6 +276,11 @@ export default defineSchema({
 
     notes: v.union(v.string(), v.null()),
 
+    isDeleted: v.optional(v.boolean()),
+    deletedAt: v.optional(v.union(v.string(), v.null())),
+    deletedByUserId: v.optional(v.union(v.id("appUsers"), v.null())),
+    deleteReason: v.optional(v.union(v.string(), v.null())),
+
     createdAt: v.string(),
     updatedAt: v.string(),
   })
@@ -283,7 +288,8 @@ export default defineSchema({
     .index("by_receiptStatus", ["receiptStatus"])
     .index("by_campusCode", ["campusCode"])
     .index("by_weekStartDate", ["weekStartDate"])
-    .index("by_shoppingDate", ["shoppingDate"]),
+    .index("by_shoppingDate", ["shoppingDate"])
+    .index("by_isDeleted", ["isDeleted"]),
 
   purchaseItems: defineTable({
     purchaseBatchId: v.id("purchaseBatches"),
@@ -659,6 +665,8 @@ export default defineSchema({
       v.literal("PURCHASE_ITEM_MANUAL_ENTRY"),
       v.literal("PURCHASE_BATCH_APPROVED"),
       v.literal("PURCHASE_BATCH_REJECTED"),
+      v.literal("PURCHASE_BATCH_DELETED"),
+      v.literal("PURCHASE_BATCH_RESTORED"),
 
       v.literal("KITCHEN_ISSUE_CREATED"),
       v.literal("KITCHEN_ISSUE_RECEIVED"),

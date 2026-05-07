@@ -40,6 +40,12 @@ function cleanText(value: string) {
   return value.trim();
 }
 
+function assertBatchNotDeleted(batch: any) {
+  if (batch.isDeleted === true) {
+    throw new Error("This purchase batch has been archived/deleted and cannot be changed.");
+  }
+}
+
 function makeBatchNumber() {
   const date = new Date();
   const stamp = date
@@ -62,6 +68,8 @@ async function createActivityLog(
       | "PURCHASE_ITEM_MANUAL_ENTRY"
       | "PURCHASE_BATCH_APPROVED"
       | "PURCHASE_BATCH_REJECTED"
+      | "PURCHASE_BATCH_DELETED"
+      | "PURCHASE_BATCH_RESTORED"
       | "INVENTORY_STOCK_IN";
     purchaseBatchId?: any;
     inventoryItemId?: any;
@@ -138,6 +146,8 @@ export const attachReceiptToBatch = mutation({
     if (!batch) {
       throw new Error("Purchase batch not found.");
     }
+
+    assertBatchNotDeleted(batch);
 
     if (batch.receiptStatus === "APPROVED") {
       throw new Error("Cannot attach a receipt to an approved purchase batch.");
@@ -267,6 +277,11 @@ export const createBatch = mutation({
 
       notes: args.notes?.trim() || null,
 
+      isDeleted: false,
+      deletedAt: null,
+      deletedByUserId: null,
+      deleteReason: null,
+
       createdAt,
       updatedAt: createdAt,
     });
@@ -322,6 +337,8 @@ export const addItem = mutation({
     if (!batch) {
       throw new Error("Purchase batch not found.");
     }
+
+    assertBatchNotDeleted(batch);
 
     if (batch.receiptStatus === "APPROVED") {
       throw new Error("Cannot add items to an approved purchase batch.");
@@ -441,6 +458,8 @@ export const updateItem = mutation({
     if (!batch) {
       throw new Error("Purchase batch not found.");
     }
+
+    assertBatchNotDeleted(batch);
 
     if (batch.receiptStatus === "APPROVED") {
       throw new Error("Cannot edit items in an approved purchase batch.");
@@ -567,6 +586,8 @@ export const deleteItem = mutation({
       throw new Error("Purchase batch not found.");
     }
 
+    assertBatchNotDeleted(batch);
+
     if (batch.receiptStatus === "APPROVED") {
       throw new Error("Cannot delete items from an approved purchase batch.");
     }
@@ -609,6 +630,8 @@ export const listBatches = query({
     campusCode: v.optional(campusValidator),
     receiptStatus: v.optional(receiptStatusValidator),
     weekStartDate: v.optional(v.string()),
+    includeDeleted: v.optional(v.boolean()),
+    deletedOnly: v.optional(v.boolean()),
     limit: v.optional(v.number()),
   },
 
@@ -661,11 +684,20 @@ export const listBatches = query({
       );
     }
 
+    if (args.deletedOnly) {
+      batches = batches.filter((batch) => batch.isDeleted === true);
+    } else if (!args.includeDeleted) {
+      batches = batches.filter((batch) => batch.isDeleted !== true);
+    }
+
     return await Promise.all(
       batches.map(async (batch) => {
         const enteredBy = await ctx.db.get(batch.enteredByUserId);
         const approvedBy = batch.approvedByUserId
           ? await ctx.db.get(batch.approvedByUserId)
+          : null;
+        const deletedBy = batch.deletedByUserId
+          ? await ctx.db.get(batch.deletedByUserId)
           : null;
 
         const items = await ctx.db
@@ -679,6 +711,7 @@ export const listBatches = query({
           ...batch,
           enteredByName: enteredBy?.name ?? "Unknown",
           approvedByName: approvedBy?.name ?? null,
+          deletedByName: deletedBy?.name ?? null,
           itemCount: items.length,
         };
       })
@@ -725,11 +758,15 @@ export const getBatch = query({
     const approvedBy = batch.approvedByUserId
       ? await ctx.db.get(batch.approvedByUserId)
       : null;
+    const deletedBy = batch.deletedByUserId
+      ? await ctx.db.get(batch.deletedByUserId)
+      : null;
 
     return {
       ...batch,
       enteredByName: enteredBy?.name ?? "Unknown",
       approvedByName: approvedBy?.name ?? null,
+      deletedByName: deletedBy?.name ?? null,
       items: enrichedItems.sort((a, b) =>
         a.normalizedItemName.localeCompare(b.normalizedItemName)
       ),
@@ -753,6 +790,8 @@ export const markReviewed = mutation({
     if (!batch) {
       throw new Error("Purchase batch not found.");
     }
+
+    assertBatchNotDeleted(batch);
 
     if (batch.receiptStatus === "APPROVED") {
       throw new Error("Purchase batch is already approved.");
@@ -793,6 +832,8 @@ export const approveBatch = mutation({
     if (!batch) {
       throw new Error("Purchase batch not found.");
     }
+
+    assertBatchNotDeleted(batch);
 
     if (batch.receiptStatus === "APPROVED") {
       throw new Error("Purchase batch is already approved.");
@@ -939,6 +980,8 @@ export const rejectBatch = mutation({
       throw new Error("Purchase batch not found.");
     }
 
+    assertBatchNotDeleted(batch);
+
     if (batch.receiptStatus === "APPROVED") {
       throw new Error("Cannot reject an approved purchase batch.");
     }
@@ -964,6 +1007,128 @@ export const rejectBatch = mutation({
       success: true,
       purchaseBatchId: args.purchaseBatchId,
       receiptStatus: "REJECTED",
+    };
+  },
+});
+
+
+/**
+ * 🔹 SOFT DELETE / ARCHIVE PURCHASE BATCH
+ *
+ * Super admin UI uses this to hide old/test batches without destroying audit history.
+ * Approved batches are archived only; inventory movements are NOT reversed here.
+ */
+export const softDeleteBatch = mutation({
+  args: {
+    purchaseBatchId: v.id("purchaseBatches"),
+    deletedByUserId: v.id("appUsers"),
+    reason: v.string(),
+    actor: v.optional(v.string()),
+  },
+
+  handler: async (ctx, args) => {
+    const batch = await ctx.db.get(args.purchaseBatchId);
+
+    if (!batch) {
+      throw new Error("Purchase batch not found.");
+    }
+
+    if (batch.isDeleted === true) {
+      throw new Error("Purchase batch is already archived/deleted.");
+    }
+
+    const user = await ctx.db.get(args.deletedByUserId);
+
+    if (!user) {
+      throw new Error("Deleting user not found.");
+    }
+
+    if (user.role !== "super_admin") {
+      throw new Error("Only a super admin can archive/delete purchase batches.");
+    }
+
+    const reason = cleanText(args.reason);
+
+    if (!reason) {
+      throw new Error("A delete/archive reason is required.");
+    }
+
+    const deletedAt = now();
+
+    await ctx.db.patch(args.purchaseBatchId, {
+      isDeleted: true,
+      deletedAt,
+      deletedByUserId: args.deletedByUserId,
+      deleteReason: reason,
+      updatedAt: deletedAt,
+    });
+
+    await createActivityLog(ctx, {
+      actionType: "PURCHASE_BATCH_DELETED",
+      purchaseBatchId: args.purchaseBatchId,
+      actor: args.actor ?? user.name,
+      details: `Archived/deleted purchase batch ${batch.batchNumber}. Reason: ${reason}`,
+      targetCampusCode: batch.campusCode,
+      amount: batch.totalAmount,
+    });
+
+    return {
+      success: true,
+      purchaseBatchId: args.purchaseBatchId,
+      isDeleted: true,
+      deletedAt,
+    };
+  },
+});
+
+/**
+ * 🔹 RESTORE ARCHIVED PURCHASE BATCH
+ */
+export const restoreBatch = mutation({
+  args: {
+    purchaseBatchId: v.id("purchaseBatches"),
+    restoredByUserId: v.id("appUsers"),
+    actor: v.optional(v.string()),
+  },
+
+  handler: async (ctx, args) => {
+    const batch = await ctx.db.get(args.purchaseBatchId);
+
+    if (!batch) {
+      throw new Error("Purchase batch not found.");
+    }
+
+    const user = await ctx.db.get(args.restoredByUserId);
+
+    if (!user) {
+      throw new Error("Restoring user not found.");
+    }
+
+    if (user.role !== "super_admin") {
+      throw new Error("Only a super admin can restore archived purchase batches.");
+    }
+
+    await ctx.db.patch(args.purchaseBatchId, {
+      isDeleted: false,
+      deletedAt: null,
+      deletedByUserId: null,
+      deleteReason: null,
+      updatedAt: now(),
+    });
+
+    await createActivityLog(ctx, {
+      actionType: "PURCHASE_BATCH_RESTORED",
+      purchaseBatchId: args.purchaseBatchId,
+      actor: args.actor ?? user.name,
+      details: `Restored archived purchase batch ${batch.batchNumber}`,
+      targetCampusCode: batch.campusCode,
+      amount: batch.totalAmount,
+    });
+
+    return {
+      success: true,
+      purchaseBatchId: args.purchaseBatchId,
+      isDeleted: false,
     };
   },
 });

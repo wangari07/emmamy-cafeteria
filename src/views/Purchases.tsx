@@ -15,6 +15,7 @@ import {
   Upload,
   FileText,
   ExternalLink,
+  Archive,
 } from 'lucide-react';
 import { useMutation, useQuery } from 'convex/react';
 import { api } from '../../convex/_generated/api';
@@ -122,12 +123,14 @@ export function Purchases() {
   ) as Id<'appUsers'> | undefined;
 
   const actor = user?.name || user?.email || 'Unknown user';
+  const isSuperAdmin = user?.role === 'super_admin';
   const defaultCampus = userCampusToInventoryCampus(user?.school);
 
   const [campusFilter, setCampusFilter] = useState<CampusCode | 'All'>(
     defaultCampus || 'All'
   );
   const [statusFilter, setStatusFilter] = useState<ReceiptStatus | 'All'>('All');
+  const [showArchived, setShowArchived] = useState(false);
   const [weekStartFilter, setWeekStartFilter] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -148,6 +151,8 @@ export function Purchases() {
     campusCode: campusFilter === 'All' ? undefined : campusFilter,
     receiptStatus: statusFilter === 'All' ? undefined : statusFilter,
     weekStartDate: weekStartFilter || undefined,
+    deletedOnly: showArchived && isSuperAdmin ? true : undefined,
+    includeDeleted: showArchived && isSuperAdmin ? true : undefined,
     limit: 100,
   });
 
@@ -169,6 +174,8 @@ export function Purchases() {
   const markReviewed = useMutation(api.purchases.markReviewed);
   const approveBatch = useMutation(api.purchases.approveBatch);
   const rejectBatch = useMutation(api.purchases.rejectBatch);
+  const softDeleteBatch = useMutation((api.purchases as any).softDeleteBatch);
+  const restoreBatch = useMutation((api.purchases as any).restoreBatch);
 
   const generateReceiptUploadUrl = useMutation(
     (api.purchases as any).generateReceiptUploadUrl
@@ -319,6 +326,73 @@ export function Purchases() {
     }
   };
 
+  const handleArchiveBatch = async (batchId: Id<'purchaseBatches'>) => {
+    if (!appUserId || !isSuperAdmin) {
+      setMessage({
+        type: 'error',
+        text: 'Only a super admin can archive/delete purchase batches.',
+      });
+      return;
+    }
+
+    const reason = window.prompt(
+      'Why are you archiving/deleting this purchase batch? This will hide it from the normal Purchases page.'
+    );
+
+    if (!reason || !reason.trim()) return;
+
+    try {
+      await softDeleteBatch({
+        purchaseBatchId: batchId,
+        deletedByUserId: appUserId,
+        reason: reason.trim(),
+        actor,
+      });
+
+      setMessage({
+        type: 'success',
+        text: 'Purchase batch archived/deleted. It is now hidden from the normal Purchases list.',
+      });
+    } catch (error: any) {
+      setMessage({
+        type: 'error',
+        text: error?.message || 'Failed to archive/delete purchase batch.',
+      });
+    }
+  };
+
+  const handleRestoreBatch = async (batchId: Id<'purchaseBatches'>) => {
+    if (!appUserId || !isSuperAdmin) {
+      setMessage({
+        type: 'error',
+        text: 'Only a super admin can restore purchase batches.',
+      });
+      return;
+    }
+
+    const confirmed = window.confirm('Restore this archived purchase batch back to the normal Purchases list?');
+
+    if (!confirmed) return;
+
+    try {
+      await restoreBatch({
+        purchaseBatchId: batchId,
+        restoredByUserId: appUserId,
+        actor,
+      });
+
+      setMessage({
+        type: 'success',
+        text: 'Purchase batch restored.',
+      });
+    } catch (error: any) {
+      setMessage({
+        type: 'error',
+        text: error?.message || 'Failed to restore purchase batch.',
+      });
+    }
+  };
+
   const totalSubmitted = filteredBatches.reduce(
     (sum, batch) => sum + (batch.totalAmount ?? 0),
     0
@@ -366,6 +440,34 @@ export function Purchases() {
             I cannot find your app user ID in the login context. Creating and approving purchases needs this ID.
             If buttons fail, we’ll fix AuthContext next.
           </p>
+        </div>
+      )}
+
+      {isSuperAdmin && (
+        <div className="rounded-2xl border border-gray-100 bg-white p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3 shadow-sm">
+          <div>
+            <p className="text-sm font-bold text-brand-text">Super Admin Batch Management</p>
+            <p className="text-xs text-brand-text-muted mt-1">
+              Switch to archived/deleted batches to restore old records. Normal view hides archived batches.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              setShowArchived((value) => !value);
+              setSelectedBatchId(null);
+              setMessage(null);
+            }}
+            className={`px-4 py-2 rounded-xl text-sm font-semibold inline-flex items-center gap-2 ${
+              showArchived
+                ? 'bg-red-50 text-red-700 border border-red-100 hover:bg-red-100'
+                : 'bg-gray-100 text-brand-text border border-gray-200 hover:bg-gray-200'
+            }`}
+          >
+            <Archive size={16} />
+            {showArchived ? 'Viewing Archived Batches' : 'Show Archived Batches'}
+          </button>
         </div>
       )}
 
@@ -597,7 +699,7 @@ export function Purchases() {
                           View
                         </button>
 
-                        {canEditBatch(batch.receiptStatus) && (
+                        {canEditBatch(batch.receiptStatus) && !batch.isDeleted && (
                           <button
                             onClick={() => openUploadReceipt(batch._id)}
                             className="px-3 py-1.5 rounded-lg bg-amber-50 text-amber-700 text-xs font-semibold hover:bg-amber-100 inline-flex items-center gap-1"
@@ -607,7 +709,7 @@ export function Purchases() {
                           </button>
                         )}
 
-                        {canEditBatch(batch.receiptStatus) && (
+                        {canEditBatch(batch.receiptStatus) && !batch.isDeleted && (
                           <button
                             onClick={() => openAddItem(batch._id)}
                             className="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 text-xs font-semibold hover:bg-blue-100"
@@ -616,7 +718,7 @@ export function Purchases() {
                           </button>
                         )}
 
-                        {canEditBatch(batch.receiptStatus) && (
+                        {canEditBatch(batch.receiptStatus) && !batch.isDeleted && (
                           <button
                             onClick={() => handleMarkReviewed(batch._id)}
                             className="px-3 py-1.5 rounded-lg bg-purple-50 text-purple-700 text-xs font-semibold hover:bg-purple-100"
@@ -625,7 +727,7 @@ export function Purchases() {
                           </button>
                         )}
 
-                        {canEditBatch(batch.receiptStatus) && (
+                        {canEditBatch(batch.receiptStatus) && !batch.isDeleted && (
                           <button
                             onClick={() => handleApprove(batch._id)}
                             className="px-3 py-1.5 rounded-lg bg-green-50 text-green-700 text-xs font-semibold hover:bg-green-100"
@@ -634,12 +736,32 @@ export function Purchases() {
                           </button>
                         )}
 
-                        {canEditBatch(batch.receiptStatus) && (
+                        {canEditBatch(batch.receiptStatus) && !batch.isDeleted && (
                           <button
                             onClick={() => handleReject(batch._id)}
                             className="px-3 py-1.5 rounded-lg bg-red-50 text-red-700 text-xs font-semibold hover:bg-red-100"
                           >
                             Reject
+                          </button>
+                        )}
+
+                        {isSuperAdmin && !batch.isDeleted && (
+                          <button
+                            onClick={() => handleArchiveBatch(batch._id)}
+                            className="px-3 py-1.5 rounded-lg bg-red-50 text-red-700 text-xs font-semibold hover:bg-red-100 inline-flex items-center gap-1"
+                          >
+                            <Trash2 size={14} />
+                            Archive
+                          </button>
+                        )}
+
+                        {isSuperAdmin && batch.isDeleted && (
+                          <button
+                            onClick={() => handleRestoreBatch(batch._id)}
+                            className="px-3 py-1.5 rounded-lg bg-green-50 text-green-700 text-xs font-semibold hover:bg-green-100 inline-flex items-center gap-1"
+                          >
+                            <RefreshCcw size={14} />
+                            Restore
                           </button>
                         )}
                       </div>
@@ -1408,7 +1530,7 @@ function BatchDetailsModal({
                 </button>
               )}
 
-              {canEditBatch(batch.receiptStatus) && (
+              {canEditBatch(batch.receiptStatus) && !batch.isDeleted && (
                 <button
                   type="button"
                   onClick={onUploadReceipt}
@@ -1422,6 +1544,17 @@ function BatchDetailsModal({
           </div>
         </div>
 
+
+        {batch.isDeleted && (
+          <div className="bg-red-50 border border-red-100 rounded-xl p-4 text-sm text-red-800">
+            <p className="font-bold">Archived / Deleted Batch</p>
+            <p className="mt-1">Reason: {batch.deleteReason || 'No reason recorded'}</p>
+            <p className="text-xs mt-1">
+              Deleted by {batch.deletedByName || 'Unknown'} on {formatDate(batch.deletedAt)}
+            </p>
+          </div>
+        )}
+
         {batch.notes && (
           <div className="bg-gray-50 border border-gray-100 rounded-xl p-4">
             <p className="text-xs uppercase tracking-wide text-brand-text-muted font-semibold mb-1">
@@ -1434,7 +1567,7 @@ function BatchDetailsModal({
         <div className="flex items-center justify-between">
           <h3 className="font-semibold text-brand-text">Receipt Items</h3>
 
-          {canEditBatch(batch.receiptStatus) && (
+          {canEditBatch(batch.receiptStatus) && !batch.isDeleted && (
             <button
               onClick={onAddItem}
               className="px-3 py-1.5 rounded-lg bg-brand-primary text-brand-navy text-xs font-bold hover:bg-brand-primary-hover inline-flex items-center gap-1"
@@ -1514,7 +1647,7 @@ function BatchDetailsModal({
                     </td>
 
                     <td className="px-4 py-3 text-right">
-                      {canEditBatch(batch.receiptStatus) && (
+                      {canEditBatch(batch.receiptStatus) && !batch.isDeleted && (
                         <button
                           onClick={() => handleDeleteItem(item._id)}
                           className="px-3 py-1.5 rounded-lg bg-red-50 text-red-700 text-xs font-semibold hover:bg-red-100 inline-flex items-center gap-1"
