@@ -128,7 +128,6 @@ export default defineSchema({
     reorderLevel: v.number(),
     isActive: v.boolean(),
 
-    // Optional costing helpers. Existing records remain valid.
     averageUnitCost: v.optional(v.number()),
     lastUnitCost: v.optional(v.number()),
     lastPurchaseDate: v.optional(v.union(v.string(), v.null())),
@@ -211,7 +210,6 @@ export default defineSchema({
 
     orderId: v.union(v.id("campusOrders"), v.null()),
 
-    // Optional links for purchases/kitchen operations.
     purchaseBatchId: v.optional(v.union(v.id("purchaseBatches"), v.null())),
     kitchenIssueId: v.optional(v.union(v.id("kitchenIssues"), v.null())),
     kitchenClosingId: v.optional(v.union(v.id("dailyKitchenClosings"), v.null())),
@@ -234,15 +232,15 @@ export default defineSchema({
     .index("by_kitchenClosingId", ["kitchenClosingId"])
     .index("by_createdAt", ["createdAt"]),
 
-  /**
-   * Purchase receipt / weekly shopping batch.
-   * One shopping trip or one receipt upload/manual entry.
-   */
   purchaseBatches: defineTable({
     batchNumber: v.string(),
 
     supplierName: v.union(v.string(), v.null()),
+
+    receiptStorageId: v.optional(v.union(v.id("_storage"), v.null())),
     receiptImageUrl: v.union(v.string(), v.null()),
+    receiptFileName: v.optional(v.union(v.string(), v.null())),
+    receiptMimeType: v.optional(v.union(v.string(), v.null())),
 
     receiptEntryMode: v.union(
       v.literal("MANUAL"),
@@ -259,6 +257,10 @@ export default defineSchema({
       v.literal("APPROVED"),
       v.literal("REJECTED")
     ),
+
+    aiExtractedJson: v.optional(v.union(v.any(), v.null())),
+    aiConfidence: v.optional(v.union(v.number(), v.null())),
+    reviewNotes: v.optional(v.union(v.string(), v.null())),
 
     totalAmount: v.number(),
 
@@ -308,10 +310,6 @@ export default defineSchema({
     .index("by_inventoryItemId", ["inventoryItemId"])
     .index("by_category", ["category"]),
 
-  /**
-   * Store room → kitchen issue.
-   * This captures what leaves the store and goes into the kitchen.
-   */
   kitchenIssues: defineTable({
     issueNumber: v.string(),
 
@@ -325,6 +323,7 @@ export default defineSchema({
       v.literal("LUNCH_PREP"),
       v.literal("TEA_PREP"),
       v.literal("SNACK_PREP"),
+      v.literal("FRUIT_PREP"),
       v.literal("FRUIT_SERVICE"),
       v.literal("DIGITAL_CAMPUS_PACKING"),
       v.literal("OTHER")
@@ -359,16 +358,14 @@ export default defineSchema({
     estimatedUnitCost: v.number(),
     estimatedTotalCost: v.number(),
 
+    notes: v.optional(v.union(v.string(), v.null())),
+
     createdAt: v.string(),
     updatedAt: v.string(),
   })
     .index("by_kitchenIssueId", ["kitchenIssueId"])
     .index("by_inventoryItemId", ["inventoryItemId"]),
 
-  /**
-   * End-of-day kitchen closing.
-   * Used for leftovers, waste, and daily meal operation accountability.
-   */
   dailyKitchenClosings: defineTable({
     closingDate: v.string(),
     campusCode: campusValidator,
@@ -379,6 +376,9 @@ export default defineSchema({
     teaServedCount: v.number(),
     snackServedCount: v.number(),
     fruitServedCount: v.number(),
+
+    totalWasteCost: v.optional(v.number()),
+    totalLeftoverValue: v.optional(v.number()),
 
     notes: v.union(v.string(), v.null()),
 
@@ -396,8 +396,11 @@ export default defineSchema({
     itemNameSnapshot: v.string(),
     unitSnapshot: v.string(),
 
-    quantityLeftover: v.number(),
-    quantityWasted: v.number(),
+    leftoverQty: v.optional(v.number()),
+    wasteQty: v.optional(v.number()),
+
+    quantityLeftover: v.optional(v.number()),
+    quantityWasted: v.optional(v.number()),
 
     estimatedUnitCost: v.number(),
     leftoverValue: v.number(),
@@ -411,10 +414,6 @@ export default defineSchema({
     .index("by_closingId", ["closingId"])
     .index("by_inventoryItemId", ["inventoryItemId"]),
 
-  /**
-   * Optional cost recipe/rule per serving.
-   * Example: one lunch uses 0.15kg rice, 0.08kg beans, etc.
-   */
   mealCostRules: defineTable({
     mealCategory: mealCategoryValidator,
 
@@ -433,10 +432,6 @@ export default defineSchema({
     .index("by_inventoryItemId", ["inventoryItemId"])
     .index("by_isActive", ["isActive"]),
 
-  /**
-   * Saved weekly profit/loss report.
-   * We can generate this from purchases, kitchen issues, closings, and mealHistory.
-   */
   weeklyMealReports: defineTable({
     reportNumber: v.string(),
 
@@ -634,14 +629,12 @@ export default defineSchema({
 
   activityLogs: defineTable({
     actionType: v.union(
-      // Existing student/wallet/meal actions
       v.literal("PRINT_MEAL_PASS"),
       v.literal("POST_PAYMENT"),
       v.literal("MANUAL_PAYMENT_ATTACH"),
       v.literal("SERVE_MEAL"),
       v.literal("WALLET_ADJUSTMENT"),
 
-      // Campus order actions
       v.literal("ORDER_CREATED"),
       v.literal("ORDER_APPROVED"),
       v.literal("ORDER_PARTIALLY_APPROVED"),
@@ -651,7 +644,6 @@ export default defineSchema({
       v.literal("ORDER_RECEIVED"),
       v.literal("ORDER_CANCELLED"),
 
-      // Inventory actions
       v.literal("INVENTORY_ITEM_CREATED"),
       v.literal("INVENTORY_STOCK_IN"),
       v.literal("INVENTORY_DISPATCH_OUT"),
@@ -661,7 +653,6 @@ export default defineSchema({
       v.literal("INVENTORY_WASTE_RECORDED"),
       v.literal("INVENTORY_LEFTOVER_RETURNED"),
 
-      // Purchase / receipt actions
       v.literal("PURCHASE_BATCH_CREATED"),
       v.literal("PURCHASE_RECEIPT_UPLOADED"),
       v.literal("PURCHASE_RECEIPT_AI_EXTRACTED"),
@@ -669,12 +660,10 @@ export default defineSchema({
       v.literal("PURCHASE_BATCH_APPROVED"),
       v.literal("PURCHASE_BATCH_REJECTED"),
 
-      // Kitchen actions
       v.literal("KITCHEN_ISSUE_CREATED"),
       v.literal("KITCHEN_ISSUE_RECEIVED"),
       v.literal("KITCHEN_CLOSING_SUBMITTED"),
 
-      // Reports
       v.literal("WEEKLY_REPORT_GENERATED"),
       v.literal("PROFIT_LOSS_REVIEWED")
     ),
@@ -691,7 +680,6 @@ export default defineSchema({
     actor: v.union(v.string(), v.null()),
     details: v.union(v.string(), v.null()),
 
-    // New accountability links.
     orderId: v.optional(v.union(v.id("campusOrders"), v.null())),
     inventoryItemId: v.optional(v.union(v.id("inventoryItems"), v.null())),
     purchaseBatchId: v.optional(v.union(v.id("purchaseBatches"), v.null())),

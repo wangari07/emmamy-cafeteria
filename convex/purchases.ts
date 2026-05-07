@@ -105,6 +105,95 @@ async function createActivityLog(
 }
 
 /**
+ * 🔹 GENERATE RECEIPT UPLOAD URL
+ *
+ * Frontend calls this first, uploads the file to the returned URL,
+ * then sends the returned storageId to attachReceiptToBatch.
+ */
+export const generateReceiptUploadUrl = mutation({
+  args: {},
+
+  handler: async (ctx) => {
+    return await ctx.storage.generateUploadUrl();
+  },
+});
+
+/**
+ * 🔹 ATTACH RECEIPT FILE TO PURCHASE BATCH
+ *
+ * Saves uploaded receipt metadata on a purchase batch.
+ */
+export const attachReceiptToBatch = mutation({
+  args: {
+    purchaseBatchId: v.id("purchaseBatches"),
+    receiptStorageId: v.id("_storage"),
+    receiptFileName: v.string(),
+    receiptMimeType: v.string(),
+    actor: v.optional(v.string()),
+  },
+
+  handler: async (ctx, args) => {
+    const batch = await ctx.db.get(args.purchaseBatchId);
+
+    if (!batch) {
+      throw new Error("Purchase batch not found.");
+    }
+
+    if (batch.receiptStatus === "APPROVED") {
+      throw new Error("Cannot attach a receipt to an approved purchase batch.");
+    }
+
+    if (batch.receiptStatus === "REJECTED") {
+      throw new Error("Cannot attach a receipt to a rejected purchase batch.");
+    }
+
+    const receiptImageUrl = await ctx.storage.getUrl(args.receiptStorageId);
+
+    if (!receiptImageUrl) {
+      throw new Error("Could not generate receipt file URL.");
+    }
+
+    const nextStatus =
+      batch.receiptStatus === "DRAFT"
+        ? "UPLOADED"
+        : batch.receiptStatus === "REVIEWED"
+          ? "REVIEWED"
+          : "NEEDS_REVIEW";
+
+    const receiptFileName = cleanText(args.receiptFileName);
+    const receiptMimeType = cleanText(args.receiptMimeType);
+
+    await ctx.db.patch(args.purchaseBatchId, {
+      receiptStorageId: args.receiptStorageId,
+      receiptImageUrl,
+      receiptFileName,
+      receiptMimeType,
+      receiptEntryMode: "IMAGE_UPLOAD",
+      receiptStatus: nextStatus,
+      updatedAt: now(),
+    });
+
+    await createActivityLog(ctx, {
+      actionType: "PURCHASE_RECEIPT_UPLOADED",
+      purchaseBatchId: args.purchaseBatchId,
+      actor: args.actor ?? null,
+      details: `Uploaded receipt file ${receiptFileName} for purchase batch ${batch.batchNumber}`,
+      targetCampusCode: batch.campusCode,
+      amount: batch.totalAmount,
+    });
+
+    return {
+      success: true,
+      purchaseBatchId: args.purchaseBatchId,
+      receiptImageUrl,
+      receiptFileName,
+      receiptMimeType,
+      receiptStatus: nextStatus,
+    };
+  },
+});
+
+/**
  * 🔹 CREATE PURCHASE BATCH
  *
  * A purchase batch is one weekly shopping entry or one receipt.
@@ -155,7 +244,11 @@ export const createBatch = mutation({
       batchNumber,
 
       supplierName,
+
+      receiptStorageId: null,
       receiptImageUrl,
+      receiptFileName: null,
+      receiptMimeType: null,
 
       receiptEntryMode,
       receiptStatus,
@@ -203,8 +296,6 @@ export const createBatch = mutation({
 
 /**
  * 🔹 ADD PURCHASE ITEM
- *
- * Add one line item from a receipt/manual entry.
  */
 export const addItem = mutation({
   args: {
@@ -687,12 +778,6 @@ export const markReviewed = mutation({
 
 /**
  * 🔹 APPROVE PURCHASE BATCH
- *
- * This is where stock is actually added to inventory.
- * Every purchase item linked to an inventory item creates:
- * - inventoryItems currentStock increase
- * - inventoryMovements STOCK_IN
- * - activityLogs INVENTORY_STOCK_IN
  */
 export const approveBatch = mutation({
   args: {
