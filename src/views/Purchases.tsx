@@ -12,6 +12,9 @@ import {
   Trash2,
   ShoppingCart,
   PackageCheck,
+  Upload,
+  FileText,
+  ExternalLink,
 } from 'lucide-react';
 import { useMutation, useQuery } from 'convex/react';
 import { api } from '../../convex/_generated/api';
@@ -100,6 +103,14 @@ function formatDate(value?: string | null) {
   return new Date(value).toLocaleString();
 }
 
+function niceLabel(value: string) {
+  return value.replaceAll('_', ' ');
+}
+
+function canEditBatch(status: ReceiptStatus) {
+  return !['APPROVED', 'REJECTED'].includes(status);
+}
+
 export function Purchases() {
   const { user } = useAuth();
 
@@ -111,7 +122,6 @@ export function Purchases() {
   ) as Id<'appUsers'> | undefined;
 
   const actor = user?.name || user?.email || 'Unknown user';
-
   const defaultCampus = userCampusToInventoryCampus(user?.school);
 
   const [campusFilter, setCampusFilter] = useState<CampusCode | 'All'>(
@@ -127,6 +137,7 @@ export function Purchases() {
   const [showCreateBatchModal, setShowCreateBatchModal] = useState(false);
   const [showAddItemModal, setShowAddItemModal] = useState(false);
   const [showBatchDetailsModal, setShowBatchDetailsModal] = useState(false);
+  const [showUploadReceiptModal, setShowUploadReceiptModal] = useState(false);
 
   const [message, setMessage] = useState<{
     type: 'success' | 'error';
@@ -159,6 +170,14 @@ export function Purchases() {
   const approveBatch = useMutation(api.purchases.approveBatch);
   const rejectBatch = useMutation(api.purchases.rejectBatch);
 
+  const generateReceiptUploadUrl = useMutation(
+    (api.purchases as any).generateReceiptUploadUrl
+  );
+
+  const attachReceiptToBatch = useMutation(
+    (api.purchases as any).attachReceiptToBatch
+  );
+
   const filteredBatches = useMemo(() => {
     let rows = [...(batches ?? [])];
 
@@ -169,7 +188,8 @@ export function Purchases() {
         (batch) =>
           batch.batchNumber.toLowerCase().includes(term) ||
           (batch.supplierName ?? '').toLowerCase().includes(term) ||
-          (batch.enteredByName ?? '').toLowerCase().includes(term)
+          (batch.enteredByName ?? '').toLowerCase().includes(term) ||
+          (batch.receiptFileName ?? '').toLowerCase().includes(term)
       );
     }
 
@@ -186,6 +206,24 @@ export function Purchases() {
     setSelectedBatchId(batchId);
     setShowAddItemModal(true);
     setMessage(null);
+  };
+
+  const openUploadReceipt = (batchId: Id<'purchaseBatches'>) => {
+    setSelectedBatchId(batchId);
+    setShowUploadReceiptModal(true);
+    setMessage(null);
+  };
+
+  const viewReceipt = (url?: string | null) => {
+    if (!url) {
+      setMessage({
+        type: 'error',
+        text: 'No receipt file is attached to this purchase batch yet.',
+      });
+      return;
+    }
+
+    window.open(url, '_blank', 'noopener,noreferrer');
   };
 
   const handleNewBatchClick = () => {
@@ -296,6 +334,10 @@ export function Purchases() {
     )
   ).length;
 
+  const uploadedReceiptCount = filteredBatches.filter(
+    (batch) => Boolean(batch.receiptImageUrl)
+  ).length;
+
   return (
     <div className="p-8 space-y-8">
       <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
@@ -304,7 +346,7 @@ export function Purchases() {
             Purchases / Weekly Shopping
           </h1>
           <p className="text-brand-text-muted mt-1">
-            Record weekly receipts, link items to inventory, approve purchases, and update stock.
+            Record weekly receipts, upload proof, link items to inventory, approve purchases, and update stock.
           </p>
         </div>
 
@@ -344,25 +386,35 @@ export function Purchases() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         <SummaryCard
           icon={Receipt}
           label="Purchase Batches"
           value={filteredBatches.length}
           subtext="Visible batches"
         />
+
+        <SummaryCard
+          icon={FileText}
+          label="Receipts Uploaded"
+          value={uploadedReceiptCount}
+          subtext="Attached proof files"
+        />
+
         <SummaryCard
           icon={ShoppingCart}
           label="Submitted Cost"
           value={formatMoney(totalSubmitted)}
           subtext="All visible batches"
         />
+
         <SummaryCard
           icon={PackageCheck}
           label="Approved Stock-In"
           value={formatMoney(approvedTotal)}
           subtext="Already entered inventory"
         />
+
         <SummaryCard
           icon={AlertTriangle}
           label="Pending Review"
@@ -380,7 +432,7 @@ export function Purchases() {
           />
           <input
             type="text"
-            placeholder="Search batch number, supplier, staff..."
+            placeholder="Search batch, supplier, staff, receipt..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary focus:border-transparent transition-all text-sm"
@@ -396,7 +448,7 @@ export function Purchases() {
             <option value="All">All Campuses</option>
             {campuses.map((campus) => (
               <option key={campus} value={campus}>
-                {campus.replace('_', ' ')}
+                {niceLabel(campus)}
               </option>
             ))}
           </select>
@@ -409,7 +461,7 @@ export function Purchases() {
             <option value="All">All Statuses</option>
             {receiptStatuses.map((status) => (
               <option key={status} value={status}>
-                {status.replaceAll('_', ' ')}
+                {niceLabel(status)}
               </option>
             ))}
           </select>
@@ -439,6 +491,9 @@ export function Purchases() {
                   Supplier
                 </th>
                 <th className="px-6 py-4 text-xs font-semibold text-brand-text-muted uppercase tracking-wider">
+                  Receipt
+                </th>
+                <th className="px-6 py-4 text-xs font-semibold text-brand-text-muted uppercase tracking-wider">
                   Week
                 </th>
                 <th className="px-6 py-4 text-xs font-semibold text-brand-text-muted uppercase tracking-wider">
@@ -459,13 +514,13 @@ export function Purchases() {
             <tbody className="divide-y divide-gray-100">
               {batches === undefined ? (
                 <tr>
-                  <td colSpan={8} className="px-6 py-10 text-center text-brand-text-muted">
+                  <td colSpan={9} className="px-6 py-10 text-center text-brand-text-muted">
                     Loading purchases...
                   </td>
                 </tr>
               ) : filteredBatches.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-6 py-10 text-center text-brand-text-muted">
+                  <td colSpan={9} className="px-6 py-10 text-center text-brand-text-muted">
                     No purchase batches found.
                   </td>
                 </tr>
@@ -485,11 +540,33 @@ export function Purchases() {
                     </td>
 
                     <td className="px-6 py-4 text-sm text-brand-text-muted">
-                      {batch.campusCode.replace('_', ' ')}
+                      {niceLabel(batch.campusCode)}
                     </td>
 
                     <td className="px-6 py-4 text-sm text-brand-text">
                       {batch.supplierName || '—'}
+                    </td>
+
+                    <td className="px-6 py-4">
+                      {batch.receiptImageUrl ? (
+                        <div className="space-y-1">
+                          <button
+                            type="button"
+                            onClick={() => viewReceipt(batch.receiptImageUrl)}
+                            className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 hover:underline"
+                          >
+                            <FileText size={14} />
+                            View Receipt
+                          </button>
+                          <p className="text-[11px] text-brand-text-muted max-w-[160px] truncate">
+                            {batch.receiptFileName || 'Uploaded receipt'}
+                          </p>
+                        </div>
+                      ) : (
+                        <span className="inline-flex px-2.5 py-1 rounded-md text-xs font-medium bg-gray-100 text-gray-600 border border-gray-200">
+                          No receipt
+                        </span>
+                      )}
                     </td>
 
                     <td className="px-6 py-4 text-sm text-brand-text-muted">
@@ -520,7 +597,17 @@ export function Purchases() {
                           View
                         </button>
 
-                        {!['APPROVED', 'REJECTED'].includes(batch.receiptStatus) && (
+                        {canEditBatch(batch.receiptStatus) && (
+                          <button
+                            onClick={() => openUploadReceipt(batch._id)}
+                            className="px-3 py-1.5 rounded-lg bg-amber-50 text-amber-700 text-xs font-semibold hover:bg-amber-100 inline-flex items-center gap-1"
+                          >
+                            <Upload size={14} />
+                            Receipt
+                          </button>
+                        )}
+
+                        {canEditBatch(batch.receiptStatus) && (
                           <button
                             onClick={() => openAddItem(batch._id)}
                             className="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 text-xs font-semibold hover:bg-blue-100"
@@ -529,7 +616,7 @@ export function Purchases() {
                           </button>
                         )}
 
-                        {!['APPROVED', 'REJECTED'].includes(batch.receiptStatus) && (
+                        {canEditBatch(batch.receiptStatus) && (
                           <button
                             onClick={() => handleMarkReviewed(batch._id)}
                             className="px-3 py-1.5 rounded-lg bg-purple-50 text-purple-700 text-xs font-semibold hover:bg-purple-100"
@@ -538,7 +625,7 @@ export function Purchases() {
                           </button>
                         )}
 
-                        {!['APPROVED', 'REJECTED'].includes(batch.receiptStatus) && (
+                        {canEditBatch(batch.receiptStatus) && (
                           <button
                             onClick={() => handleApprove(batch._id)}
                             className="px-3 py-1.5 rounded-lg bg-green-50 text-green-700 text-xs font-semibold hover:bg-green-100"
@@ -547,7 +634,7 @@ export function Purchases() {
                           </button>
                         )}
 
-                        {!['APPROVED', 'REJECTED'].includes(batch.receiptStatus) && (
+                        {canEditBatch(batch.receiptStatus) && (
                           <button
                             onClick={() => handleReject(batch._id)}
                             className="px-3 py-1.5 rounded-lg bg-red-50 text-red-700 text-xs font-semibold hover:bg-red-100"
@@ -582,6 +669,17 @@ export function Purchases() {
         />
       )}
 
+      {showUploadReceiptModal && selectedBatch && (
+        <UploadReceiptModal
+          batch={selectedBatch}
+          actor={actor}
+          generateReceiptUploadUrl={generateReceiptUploadUrl}
+          attachReceiptToBatch={attachReceiptToBatch}
+          onClose={() => setShowUploadReceiptModal(false)}
+          setMessage={setMessage}
+        />
+      )}
+
       {showAddItemModal && selectedBatch && inventoryItems && (
         <AddPurchaseItemModal
           batch={selectedBatch}
@@ -602,6 +700,11 @@ export function Purchases() {
             setShowBatchDetailsModal(false);
             setShowAddItemModal(true);
           }}
+          onUploadReceipt={() => {
+            setShowBatchDetailsModal(false);
+            setShowUploadReceiptModal(true);
+          }}
+          onViewReceipt={() => viewReceipt(selectedBatch.receiptImageUrl)}
           onClose={() => setShowBatchDetailsModal(false)}
           setMessage={setMessage}
         />
@@ -777,7 +880,7 @@ function CreateBatchModal({
 
       setMessage({
         type: 'success',
-        text: 'Purchase batch created. You can now add receipt items.',
+        text: 'Purchase batch created. You can now upload a receipt and add receipt items.',
       });
 
       onClose();
@@ -845,6 +948,172 @@ function CreateBatchModal({
           saving={saving}
           submitLabel="Create Batch"
         />
+      </form>
+    </ModalShell>
+  );
+}
+
+function UploadReceiptModal({
+  batch,
+  actor,
+  generateReceiptUploadUrl,
+  attachReceiptToBatch,
+  onClose,
+  setMessage,
+}: {
+  batch: any;
+  actor: string;
+  generateReceiptUploadUrl: any;
+  attachReceiptToBatch: any;
+  onClose: () => void;
+  setMessage: React.Dispatch<
+    React.SetStateAction<{ type: 'success' | 'error'; text: string } | null>
+  >;
+}) {
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+
+  const handleUpload = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!selectedFile) {
+      setMessage({
+        type: 'error',
+        text: 'Please select a receipt image or PDF first.',
+      });
+      return;
+    }
+
+    const allowedTypes = [
+      'image/jpeg',
+      'image/png',
+      'image/webp',
+      'image/heic',
+      'image/heif',
+      'application/pdf',
+    ];
+
+    if (!allowedTypes.includes(selectedFile.type)) {
+      setMessage({
+        type: 'error',
+        text: 'Upload a JPG, PNG, WEBP, HEIC, or PDF receipt file.',
+      });
+      return;
+    }
+
+    try {
+      setUploading(true);
+
+      const uploadUrl = await generateReceiptUploadUrl();
+
+      const uploadResponse = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': selectedFile.type,
+        },
+        body: selectedFile,
+      });
+
+      if (!uploadResponse.ok) {
+        throw new Error('Receipt file upload failed.');
+      }
+
+      const uploadResult = await uploadResponse.json();
+
+      if (!uploadResult.storageId) {
+        throw new Error('Convex did not return a storageId for this receipt.');
+      }
+
+      await attachReceiptToBatch({
+        purchaseBatchId: batch._id,
+        receiptStorageId: uploadResult.storageId,
+        receiptFileName: selectedFile.name,
+        receiptMimeType: selectedFile.type,
+        actor,
+      });
+
+      setMessage({
+        type: 'success',
+        text: 'Receipt uploaded and attached to purchase batch.',
+      });
+
+      onClose();
+    } catch (error: any) {
+      setMessage({
+        type: 'error',
+        text: error?.message || 'Failed to upload receipt.',
+      });
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <ModalShell title={`Upload Receipt: ${batch.batchNumber}`} onClose={onClose}>
+      <form onSubmit={handleUpload} className="space-y-5">
+        {batch.receiptImageUrl && (
+          <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 text-sm text-blue-800">
+            This batch already has a receipt attached. Uploading a new file will replace the current receipt reference.
+          </div>
+        )}
+
+        <div className="border-2 border-dashed border-gray-200 rounded-2xl p-6 text-center bg-gray-50">
+          <Upload className="mx-auto text-gray-400 mb-3" size={36} />
+
+          <p className="font-semibold text-brand-text">Select receipt file</p>
+
+          <p className="text-xs text-brand-text-muted mt-1">
+            Supported: JPG, PNG, WEBP, HEIC, PDF
+          </p>
+
+          <input
+            type="file"
+            accept="image/*,.pdf"
+            onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+            className="mt-4 block w-full text-sm text-brand-text file:mr-4 file:rounded-xl file:border-0 file:bg-brand-primary file:px-4 file:py-2 file:font-semibold file:text-brand-navy hover:file:bg-brand-primary-hover"
+          />
+        </div>
+
+        {selectedFile && (
+          <div className="bg-white border border-gray-100 rounded-xl p-4">
+            <p className="text-xs uppercase tracking-wide text-brand-text-muted font-semibold">
+              Selected file
+            </p>
+
+            <p className="text-sm font-semibold text-brand-text mt-1">
+              {selectedFile.name}
+            </p>
+
+            <p className="text-xs text-brand-text-muted mt-1">
+              {(selectedFile.size / 1024 / 1024).toFixed(2)} MB ·{' '}
+              {selectedFile.type || 'unknown type'}
+            </p>
+          </div>
+        )}
+
+        <div className="flex justify-end gap-3 pt-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={uploading}
+            className="px-4 py-2 text-gray-600 hover:bg-gray-50 rounded-lg disabled:opacity-60"
+          >
+            Cancel
+          </button>
+
+          <button
+            type="submit"
+            disabled={uploading}
+            className="px-4 py-2 rounded-lg font-bold inline-flex items-center gap-2 disabled:opacity-60 bg-brand-primary text-brand-navy hover:bg-brand-primary-hover"
+          >
+            {uploading ? (
+              <RefreshCcw size={16} className="animate-spin" />
+            ) : (
+              <Upload size={16} />
+            )}
+            {uploading ? 'Uploading...' : 'Upload Receipt'}
+          </button>
+        </div>
       </form>
     </ModalShell>
   );
@@ -1049,6 +1318,8 @@ function BatchDetailsModal({
   deleteItem,
   actor,
   onAddItem,
+  onUploadReceipt,
+  onViewReceipt,
   onClose,
   setMessage,
 }: {
@@ -1056,6 +1327,8 @@ function BatchDetailsModal({
   deleteItem: any;
   actor: string;
   onAddItem: () => void;
+  onUploadReceipt: () => void;
+  onViewReceipt: () => void;
   onClose: () => void;
   setMessage: React.Dispatch<
     React.SetStateAction<{ type: 'success' | 'error'; text: string } | null>
@@ -1088,16 +1361,65 @@ function BatchDetailsModal({
     <ModalShell title={`Purchase Batch: ${batch.batchNumber}`} onClose={onClose} maxWidth="max-w-4xl">
       <div className="space-y-5">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-          <InfoBox label="Campus" value={batch.campusCode.replace('_', ' ')} />
+          <InfoBox label="Campus" value={niceLabel(batch.campusCode)} />
           <InfoBox label="Supplier" value={batch.supplierName || '—'} />
           <InfoBox label="Total" value={formatMoney(batch.totalAmount)} />
-          <InfoBox label="Status" value={batch.receiptStatus.replaceAll('_', ' ')} />
+          <InfoBox label="Status" value={niceLabel(batch.receiptStatus)} />
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <InfoBox label="Shopping Date" value={batch.shoppingDate} />
           <InfoBox label="Week Start" value={batch.weekStartDate} />
           <InfoBox label="Week End" value={batch.weekEndDate} />
+        </div>
+
+        <div className="bg-gray-50 border border-gray-100 rounded-xl p-4">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div>
+              <p className="text-xs uppercase tracking-wide text-brand-text-muted font-semibold mb-1">
+                Receipt Proof
+              </p>
+
+              {batch.receiptImageUrl ? (
+                <>
+                  <p className="text-sm font-semibold text-brand-text">
+                    {batch.receiptFileName || 'Uploaded receipt'}
+                  </p>
+                  <p className="text-xs text-brand-text-muted mt-1">
+                    {batch.receiptMimeType || 'File uploaded'} · Stored in Convex
+                  </p>
+                </>
+              ) : (
+                <p className="text-sm text-brand-text-muted">
+                  No receipt has been uploaded for this purchase batch yet.
+                </p>
+              )}
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              {batch.receiptImageUrl && (
+                <button
+                  type="button"
+                  onClick={onViewReceipt}
+                  className="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 text-xs font-semibold hover:bg-blue-100 inline-flex items-center gap-1"
+                >
+                  <ExternalLink size={14} />
+                  View Receipt
+                </button>
+              )}
+
+              {canEditBatch(batch.receiptStatus) && (
+                <button
+                  type="button"
+                  onClick={onUploadReceipt}
+                  className="px-3 py-1.5 rounded-lg bg-amber-50 text-amber-700 text-xs font-semibold hover:bg-amber-100 inline-flex items-center gap-1"
+                >
+                  <Upload size={14} />
+                  {batch.receiptImageUrl ? 'Replace Receipt' : 'Upload Receipt'}
+                </button>
+              )}
+            </div>
+          </div>
         </div>
 
         {batch.notes && (
@@ -1112,7 +1434,7 @@ function BatchDetailsModal({
         <div className="flex items-center justify-between">
           <h3 className="font-semibold text-brand-text">Receipt Items</h3>
 
-          {!['APPROVED', 'REJECTED'].includes(batch.receiptStatus) && (
+          {canEditBatch(batch.receiptStatus) && (
             <button
               onClick={onAddItem}
               className="px-3 py-1.5 rounded-lg bg-brand-primary text-brand-navy text-xs font-bold hover:bg-brand-primary-hover inline-flex items-center gap-1"
@@ -1192,7 +1514,7 @@ function BatchDetailsModal({
                     </td>
 
                     <td className="px-4 py-3 text-right">
-                      {!['APPROVED', 'REJECTED'].includes(batch.receiptStatus) && (
+                      {canEditBatch(batch.receiptStatus) && (
                         <button
                           onClick={() => handleDeleteItem(item._id)}
                           className="px-3 py-1.5 rounded-lg bg-red-50 text-red-700 text-xs font-semibold hover:bg-red-100 inline-flex items-center gap-1"
@@ -1290,7 +1612,7 @@ function Select({
       >
         {options.map((option) => (
           <option key={option || 'empty'} value={option}>
-            {renderLabel ? renderLabel(option) : option.replaceAll('_', ' ')}
+            {renderLabel ? renderLabel(option) : niceLabel(option)}
           </option>
         ))}
       </select>
