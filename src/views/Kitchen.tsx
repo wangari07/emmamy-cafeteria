@@ -13,8 +13,6 @@ import {
   Package,
   ClipboardCheck,
   Utensils,
-  CalendarDays,
-  Archive,
 } from 'lucide-react';
 import { useMutation, useQuery } from 'convex/react';
 import { api } from '../../convex/_generated/api';
@@ -128,10 +126,15 @@ export function Kitchen() {
     selectedClosingId ? { closingId: selectedClosingId } : 'skip'
   );
 
-  const summary = useQuery(api.kitchen.getDailySummary, {
-    campusCode: campusFilter === 'All' ? undefined : campusFilter,
-    date: dateFilter || todayDate(),
-  });
+  const summary = useQuery(
+    api.kitchen.getDailySummary,
+    campusFilter === 'All'
+      ? 'skip'
+      : {
+          campusCode: campusFilter,
+          date: dateFilter || todayDate(),
+        }
+  );
 
   const inventoryItems = useQuery(api.inventory.listItems, {
     campusCode:
@@ -325,6 +328,14 @@ export function Kitchen() {
   const issuedCount = filteredIssues.filter((issue) => issue.status === 'ISSUED').length;
   const receivedCount = filteredIssues.filter((issue) => issue.status === 'RECEIVED').length;
 
+  const servedToday =
+    campusFilter === 'All'
+      ? '—'
+      : (summary?.lunchServedCount ?? 0) +
+        (summary?.teaServedCount ?? 0) +
+        (summary?.snackServedCount ?? 0) +
+        (summary?.fruitServedCount ?? 0);
+
   return (
     <div className="p-8 space-y-8">
       <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
@@ -361,6 +372,15 @@ export function Kitchen() {
           <p className="text-sm font-medium">
             I cannot find your app user ID in the login context. Creating kitchen issues
             and daily closings needs this ID.
+          </p>
+        </div>
+      )}
+
+      {campusFilter === 'All' && (
+        <div className="rounded-2xl border border-blue-200 bg-blue-50 p-4 flex items-start gap-3 text-blue-900">
+          <AlertTriangle size={20} className="shrink-0 mt-0.5" />
+          <p className="text-sm font-medium">
+            Select one campus to show the daily served summary. The issue and closing lists can still show all campuses.
           </p>
         </div>
       )}
@@ -404,13 +424,12 @@ export function Kitchen() {
         <SummaryCard
           icon={Utensils}
           label="Served Today"
-          value={
-            (summary?.lunchServedCount ?? 0) +
-            (summary?.teaServedCount ?? 0) +
-            (summary?.snackServedCount ?? 0) +
-            (summary?.fruitServedCount ?? 0)
+          value={servedToday}
+          subtext={
+            campusFilter === 'All'
+              ? 'Select a campus'
+              : `Using ${dateFilter || todayDate()}`
           }
-          subtext={`Using ${dateFilter || todayDate()}`}
         />
       </div>
 
