@@ -30,8 +30,12 @@ function makeNow() {
   return new Date().toISOString();
 }
 
-function cleanText(value: string) {
-  return value.trim();
+function cleanText(value?: string | null) {
+  return (value ?? "").trim();
+}
+
+function getUnitCost(item: any) {
+  return item.averageUnitCost ?? item.lastUnitCost ?? 0;
 }
 
 async function createActivityLog(
@@ -87,9 +91,31 @@ async function createActivityLog(
   });
 }
 
-/**
- * 🔹 LIST INVENTORY ITEMS
- */
+function shapeItem(item: any) {
+  const averageUnitCost = item.averageUnitCost ?? 0;
+  const lastUnitCost = item.lastUnitCost ?? 0;
+  const effectiveUnitCost = averageUnitCost || lastUnitCost || 0;
+
+  return {
+    _id: item._id,
+    name: item.name,
+    category: item.category,
+    unit: item.unit,
+    campusCode: item.campusCode,
+    currentStock: item.currentStock,
+    reorderLevel: item.reorderLevel,
+    isActive: item.isActive,
+    averageUnitCost,
+    lastUnitCost,
+    effectiveUnitCost,
+    lastPurchaseDate: item.lastPurchaseDate ?? null,
+    stockValue: item.currentStock * effectiveUnitCost,
+    isLowStock: item.isActive && item.currentStock <= item.reorderLevel,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+  };
+}
+
 export const listItems = query({
   args: {
     campusCode: v.optional(campusValidator),
@@ -120,37 +146,15 @@ export const listItems = query({
         (item) =>
           item.name.toLowerCase().includes(term) ||
           item.unit.toLowerCase().includes(term) ||
-          item.category.toLowerCase().includes(term)
+          item.category.toLowerCase().includes(term) ||
+          item.campusCode.toLowerCase().includes(term)
       );
     }
 
-    return items
-      .sort((a, b) => a.name.localeCompare(b.name))
-      .map((item) => ({
-        _id: item._id,
-        name: item.name,
-        category: item.category,
-        unit: item.unit,
-        campusCode: item.campusCode,
-        currentStock: item.currentStock,
-        reorderLevel: item.reorderLevel,
-        isActive: item.isActive,
-        averageUnitCost: item.averageUnitCost ?? 0,
-        lastUnitCost: item.lastUnitCost ?? 0,
-        lastPurchaseDate: item.lastPurchaseDate ?? null,
-        stockValue:
-          item.currentStock *
-          (item.averageUnitCost ?? item.lastUnitCost ?? 0),
-        isLowStock: item.currentStock <= item.reorderLevel,
-        createdAt: item.createdAt,
-        updatedAt: item.updatedAt,
-      }));
+    return items.sort((a, b) => a.name.localeCompare(b.name)).map(shapeItem);
   },
 });
 
-/**
- * 🔹 GET ONE INVENTORY ITEM
- */
 export const getItem = query({
   args: {
     inventoryItemId: v.id("inventoryItems"),
@@ -158,34 +162,11 @@ export const getItem = query({
 
   handler: async (ctx, { inventoryItemId }) => {
     const item = await ctx.db.get(inventoryItemId);
-
     if (!item) return null;
-
-    return {
-      _id: item._id,
-      name: item.name,
-      category: item.category,
-      unit: item.unit,
-      campusCode: item.campusCode,
-      currentStock: item.currentStock,
-      reorderLevel: item.reorderLevel,
-      isActive: item.isActive,
-      averageUnitCost: item.averageUnitCost ?? 0,
-      lastUnitCost: item.lastUnitCost ?? 0,
-      lastPurchaseDate: item.lastPurchaseDate ?? null,
-      stockValue:
-        item.currentStock *
-        (item.averageUnitCost ?? item.lastUnitCost ?? 0),
-      isLowStock: item.currentStock <= item.reorderLevel,
-      createdAt: item.createdAt,
-      updatedAt: item.updatedAt,
-    };
+    return shapeItem(item);
   },
 });
 
-/**
- * 🔹 LOW STOCK ITEMS
- */
 export const listLowStock = query({
   args: {
     campusCode: v.optional(campusValidator),
@@ -202,21 +183,12 @@ export const listLowStock = query({
       .filter((item) => item.isActive && item.currentStock <= item.reorderLevel)
       .sort((a, b) => a.currentStock - b.currentStock)
       .map((item) => ({
-        _id: item._id,
-        name: item.name,
-        category: item.category,
-        unit: item.unit,
-        campusCode: item.campusCode,
-        currentStock: item.currentStock,
-        reorderLevel: item.reorderLevel,
+        ...shapeItem(item),
         shortage: Math.max(item.reorderLevel - item.currentStock, 0),
       }));
   },
 });
 
-/**
- * 🔹 CREATE INVENTORY ITEM
- */
 export const createItem = mutation({
   args: {
     name: v.string(),
@@ -234,15 +206,16 @@ export const createItem = mutation({
     const name = cleanText(args.name);
     const unit = cleanText(args.unit);
 
-    if (!name) {
-      throw new Error("Inventory item name is required.");
-    }
+    if (!name) throw new Error("Inventory item name is required.");
+    if (!unit) throw new Error("Inventory unit is required.");
 
-    if (!unit) {
-      throw new Error("Inventory unit is required.");
-    }
+    const openingStock = args.currentStock ?? 0;
+    const reorderLevel = args.reorderLevel ?? 0;
+    const averageUnitCost = args.averageUnitCost ?? 0;
 
-    const now = makeNow();
+    if (openingStock < 0) throw new Error("Opening stock cannot be negative.");
+    if (reorderLevel < 0) throw new Error("Reorder level cannot be negative.");
+    if (averageUnitCost < 0) throw new Error("Average unit cost cannot be negative.");
 
     const existing = await ctx.db
       .query("inventoryItems")
@@ -255,25 +228,10 @@ export const createItem = mutation({
       .first();
 
     if (existing) {
-      throw new Error(
-        `Inventory item "${name}" already exists for ${args.campusCode}.`
-      );
+      throw new Error(`Inventory item "${name}" already exists for ${args.campusCode}.`);
     }
 
-    const openingStock = args.currentStock ?? 0;
-    const averageUnitCost = args.averageUnitCost ?? 0;
-
-    if (openingStock < 0) {
-      throw new Error("Opening stock cannot be negative.");
-    }
-
-    if ((args.reorderLevel ?? 0) < 0) {
-      throw new Error("Reorder level cannot be negative.");
-    }
-
-    if (averageUnitCost < 0) {
-      throw new Error("Average unit cost cannot be negative.");
-    }
+    const now = makeNow();
 
     const inventoryItemId = await ctx.db.insert("inventoryItems", {
       name,
@@ -281,11 +239,11 @@ export const createItem = mutation({
       unit,
       campusCode: args.campusCode,
       currentStock: openingStock,
-      reorderLevel: args.reorderLevel ?? 0,
+      reorderLevel,
       isActive: true,
       averageUnitCost,
       lastUnitCost: averageUnitCost,
-      lastPurchaseDate: null,
+      lastPurchaseDate: openingStock > 0 ? now : null,
       createdAt: now,
       updatedAt: now,
     });
@@ -305,7 +263,7 @@ export const createItem = mutation({
         totalCost: openingStock * averageUnitCost,
         createdByUserId: null,
         createdAt: now,
-        notes: args.notes ?? "Opening stock",
+        notes: cleanText(args.notes) || "Opening stock",
       });
     }
 
@@ -314,22 +272,16 @@ export const createItem = mutation({
       inventoryItemId,
       itemName: name,
       actor: args.actor ?? null,
-      details: args.notes ?? `Created inventory item ${name}`,
+      details: cleanText(args.notes) || `Created inventory item ${name}`,
       targetCampusCode: args.campusCode,
       quantity: openingStock,
       amount: openingStock * averageUnitCost,
     });
 
-    return {
-      success: true,
-      inventoryItemId,
-    };
+    return { success: true, inventoryItemId };
   },
 });
 
-/**
- * 🔹 UPDATE INVENTORY ITEM DETAILS
- */
 export const updateItem = mutation({
   args: {
     inventoryItemId: v.id("inventoryItems"),
@@ -344,50 +296,30 @@ export const updateItem = mutation({
 
   handler: async (ctx, args) => {
     const item = await ctx.db.get(args.inventoryItemId);
+    if (!item) throw new Error("Inventory item not found.");
 
-    if (!item) {
-      throw new Error("Inventory item not found.");
-    }
-
-    const patch: any = {
-      updatedAt: makeNow(),
-    };
+    const patch: any = { updatedAt: makeNow() };
 
     if (args.name !== undefined) {
       const name = cleanText(args.name);
-
-      if (!name) {
-        throw new Error("Inventory item name cannot be empty.");
-      }
-
+      if (!name) throw new Error("Inventory item name cannot be empty.");
       patch.name = name;
     }
 
-    if (args.category !== undefined) {
-      patch.category = args.category;
-    }
+    if (args.category !== undefined) patch.category = args.category;
 
     if (args.unit !== undefined) {
       const unit = cleanText(args.unit);
-
-      if (!unit) {
-        throw new Error("Unit cannot be empty.");
-      }
-
+      if (!unit) throw new Error("Unit cannot be empty.");
       patch.unit = unit;
     }
 
     if (args.reorderLevel !== undefined) {
-      if (args.reorderLevel < 0) {
-        throw new Error("Reorder level cannot be negative.");
-      }
-
+      if (args.reorderLevel < 0) throw new Error("Reorder level cannot be negative.");
       patch.reorderLevel = args.reorderLevel;
     }
 
-    if (args.isActive !== undefined) {
-      patch.isActive = args.isActive;
-    }
+    if (args.isActive !== undefined) patch.isActive = args.isActive;
 
     await ctx.db.patch(args.inventoryItemId, patch);
 
@@ -396,25 +328,14 @@ export const updateItem = mutation({
       inventoryItemId: args.inventoryItemId,
       itemName: patch.name ?? item.name,
       actor: args.actor ?? null,
-      details: args.notes ?? "Updated inventory item details",
+      details: cleanText(args.notes) || "Updated inventory item details",
       targetCampusCode: item.campusCode,
-      quantity: null,
-      amount: null,
     });
 
-    return {
-      success: true,
-      inventoryItemId: args.inventoryItemId,
-    };
+    return { success: true, inventoryItemId: args.inventoryItemId };
   },
 });
 
-/**
- * 🔹 STOCK IN
- *
- * Use this for manual stock additions.
- * Purchase approval will also create stock-in movements later.
- */
 export const stockIn = mutation({
   args: {
     inventoryItemId: v.id("inventoryItems"),
@@ -426,30 +347,20 @@ export const stockIn = mutation({
 
   handler: async (ctx, args) => {
     const item = await ctx.db.get(args.inventoryItemId);
+    if (!item) throw new Error("Inventory item not found.");
+    if (!item.isActive) throw new Error("Cannot stock in to an inactive inventory item.");
+    if (args.quantity <= 0) throw new Error("Stock-in quantity must be greater than zero.");
 
-    if (!item) {
-      throw new Error("Inventory item not found.");
-    }
-
-    if (args.quantity <= 0) {
-      throw new Error("Stock-in quantity must be greater than zero.");
-    }
+    const unitCost = args.unitCost ?? item.lastUnitCost ?? item.averageUnitCost ?? 0;
+    if (unitCost < 0) throw new Error("Unit cost cannot be negative.");
 
     const now = makeNow();
-    const unitCost = args.unitCost ?? item.lastUnitCost ?? item.averageUnitCost ?? 0;
-
-    if (unitCost < 0) {
-      throw new Error("Unit cost cannot be negative.");
-    }
-
     const oldStock = item.currentStock;
     const newStock = oldStock + args.quantity;
-
-    const oldAverage = item.averageUnitCost ?? item.lastUnitCost ?? 0;
+    const oldAverage = getUnitCost(item);
     const oldValue = oldStock * oldAverage;
     const addedValue = args.quantity * unitCost;
-    const newAverage =
-      newStock > 0 ? (oldValue + addedValue) / newStock : unitCost;
+    const newAverage = newStock > 0 ? (oldValue + addedValue) / newStock : unitCost;
 
     await ctx.db.patch(args.inventoryItemId, {
       currentStock: newStock,
@@ -473,7 +384,7 @@ export const stockIn = mutation({
       totalCost: args.quantity * unitCost,
       createdByUserId: null,
       createdAt: now,
-      notes: args.notes ?? null,
+      notes: cleanText(args.notes) || "Manual stock in",
     });
 
     await createActivityLog(ctx, {
@@ -481,9 +392,7 @@ export const stockIn = mutation({
       inventoryItemId: args.inventoryItemId,
       itemName: item.name,
       actor: args.actor ?? null,
-      details:
-        args.notes ??
-        `Stock in: ${args.quantity} ${item.unit} of ${item.name}`,
+      details: cleanText(args.notes) || `Stock in: ${args.quantity} ${item.unit} of ${item.name}`,
       targetCampusCode: item.campusCode,
       quantity: args.quantity,
       amount: args.quantity * unitCost,
@@ -500,11 +409,6 @@ export const stockIn = mutation({
   },
 });
 
-/**
- * 🔹 MANUAL STOCK ADJUSTMENT
- *
- * Sets the stock to an exact number and records the difference.
- */
 export const adjustStock = mutation({
   args: {
     inventoryItemId: v.id("inventoryItems"),
@@ -515,19 +419,16 @@ export const adjustStock = mutation({
 
   handler: async (ctx, args) => {
     const item = await ctx.db.get(args.inventoryItemId);
+    if (!item) throw new Error("Inventory item not found.");
+    if (args.newStock < 0) throw new Error("New stock cannot be negative.");
 
-    if (!item) {
-      throw new Error("Inventory item not found.");
-    }
-
-    if (args.newStock < 0) {
-      throw new Error("New stock cannot be negative.");
-    }
+    const reason = cleanText(args.notes);
+    if (!reason) throw new Error("A reason is required for stock adjustments.");
 
     const now = makeNow();
     const previousStock = item.currentStock;
     const difference = args.newStock - previousStock;
-    const unitCost = item.averageUnitCost ?? item.lastUnitCost ?? 0;
+    const unitCost = getUnitCost(item);
 
     await ctx.db.patch(args.inventoryItemId, {
       currentStock: args.newStock,
@@ -548,7 +449,7 @@ export const adjustStock = mutation({
       totalCost: difference * unitCost,
       createdByUserId: null,
       createdAt: now,
-      notes: args.notes ?? null,
+      notes: reason,
     });
 
     await createActivityLog(ctx, {
@@ -556,9 +457,7 @@ export const adjustStock = mutation({
       inventoryItemId: args.inventoryItemId,
       itemName: item.name,
       actor: args.actor ?? null,
-      details:
-        args.notes ??
-        `Adjusted stock from ${previousStock} to ${args.newStock}`,
+      details: `${reason}. Adjusted stock from ${previousStock} to ${args.newStock}`,
       sourceCampusCode: item.campusCode,
       targetCampusCode: item.campusCode,
       quantity: difference,
@@ -575,11 +474,6 @@ export const adjustStock = mutation({
   },
 });
 
-/**
- * 🔹 RECORD WASTE
- *
- * Deducts stock and records it as waste.
- */
 export const recordWaste = mutation({
   args: {
     inventoryItemId: v.id("inventoryItems"),
@@ -590,23 +484,18 @@ export const recordWaste = mutation({
 
   handler: async (ctx, args) => {
     const item = await ctx.db.get(args.inventoryItemId);
-
-    if (!item) {
-      throw new Error("Inventory item not found.");
-    }
-
-    if (args.quantity <= 0) {
-      throw new Error("Waste quantity must be greater than zero.");
-    }
-
+    if (!item) throw new Error("Inventory item not found.");
+    if (!item.isActive) throw new Error("Cannot record waste against an inactive inventory item.");
+    if (args.quantity <= 0) throw new Error("Waste quantity must be greater than zero.");
     if (args.quantity > item.currentStock) {
-      throw new Error(
-        `Cannot record waste of ${args.quantity}. Only ${item.currentStock} ${item.unit} available.`
-      );
+      throw new Error(`Cannot record waste of ${args.quantity}. Only ${item.currentStock} ${item.unit} available.`);
     }
+
+    const reason = cleanText(args.notes);
+    if (!reason) throw new Error("A reason is required when recording waste.");
 
     const now = makeNow();
-    const unitCost = item.averageUnitCost ?? item.lastUnitCost ?? 0;
+    const unitCost = getUnitCost(item);
     const newStock = item.currentStock - args.quantity;
 
     await ctx.db.patch(args.inventoryItemId, {
@@ -628,7 +517,7 @@ export const recordWaste = mutation({
       totalCost: args.quantity * unitCost,
       createdByUserId: null,
       createdAt: now,
-      notes: args.notes ?? null,
+      notes: reason,
     });
 
     await createActivityLog(ctx, {
@@ -636,9 +525,7 @@ export const recordWaste = mutation({
       inventoryItemId: args.inventoryItemId,
       itemName: item.name,
       actor: args.actor ?? null,
-      details:
-        args.notes ??
-        `Recorded waste: ${args.quantity} ${item.unit} of ${item.name}`,
+      details: `${reason}. Recorded waste: ${args.quantity} ${item.unit} of ${item.name}`,
       sourceCampusCode: item.campusCode,
       quantity: args.quantity,
       amount: args.quantity * unitCost,
@@ -654,9 +541,6 @@ export const recordWaste = mutation({
   },
 });
 
-/**
- * 🔹 LIST INVENTORY MOVEMENTS
- */
 export const listMovements = query({
   args: {
     inventoryItemId: v.optional(v.id("inventoryItems")),
@@ -670,15 +554,12 @@ export const listMovements = query({
 
   handler: async (ctx, args) => {
     const limit = Math.min(args.limit ?? 100, 300);
-
     let movements;
 
     if (args.inventoryItemId) {
       movements = await ctx.db
         .query("inventoryMovements")
-        .withIndex("by_inventoryItemId", (q) =>
-          q.eq("inventoryItemId", args.inventoryItemId!)
-        )
+        .withIndex("by_inventoryItemId", (q) => q.eq("inventoryItemId", args.inventoryItemId!))
         .order("desc")
         .take(limit);
     } else if (args.orderId) {
@@ -690,25 +571,19 @@ export const listMovements = query({
     } else if (args.purchaseBatchId) {
       movements = await ctx.db
         .query("inventoryMovements")
-        .withIndex("by_purchaseBatchId", (q) =>
-          q.eq("purchaseBatchId", args.purchaseBatchId!)
-        )
+        .withIndex("by_purchaseBatchId", (q) => q.eq("purchaseBatchId", args.purchaseBatchId!))
         .order("desc")
         .take(limit);
     } else if (args.kitchenIssueId) {
       movements = await ctx.db
         .query("inventoryMovements")
-        .withIndex("by_kitchenIssueId", (q) =>
-          q.eq("kitchenIssueId", args.kitchenIssueId!)
-        )
+        .withIndex("by_kitchenIssueId", (q) => q.eq("kitchenIssueId", args.kitchenIssueId!))
         .order("desc")
         .take(limit);
     } else if (args.kitchenClosingId) {
       movements = await ctx.db
         .query("inventoryMovements")
-        .withIndex("by_kitchenClosingId", (q) =>
-          q.eq("kitchenClosingId", args.kitchenClosingId!)
-        )
+        .withIndex("by_kitchenClosingId", (q) => q.eq("kitchenClosingId", args.kitchenClosingId!))
         .order("desc")
         .take(limit);
     } else {
@@ -720,14 +595,14 @@ export const listMovements = query({
     }
 
     if (args.movementType) {
-      movements = movements.filter(
-        (movement) => movement.movementType === args.movementType
-      );
+      movements = movements.filter((movement) => movement.movementType === args.movementType);
     }
 
-    const enriched = await Promise.all(
+    return await Promise.all(
       movements.map(async (movement) => {
         const item = await ctx.db.get(movement.inventoryItemId);
+        const purchaseBatch = movement.purchaseBatchId ? await ctx.db.get(movement.purchaseBatchId) : null;
+        const order = movement.orderId ? await ctx.db.get(movement.orderId) : null;
 
         return {
           ...movement,
@@ -735,17 +610,14 @@ export const listMovements = query({
           itemCategory: item?.category ?? null,
           itemUnit: item?.unit ?? null,
           campusCode: item?.campusCode ?? null,
+          purchaseBatchNumber: purchaseBatch?.batchNumber ?? null,
+          orderNumber: order?.orderNumber ?? null,
         };
       })
     );
-
-    return enriched;
   },
 });
 
-/**
- * 🔹 INVENTORY SUMMARY
- */
 export const getSummary = query({
   args: {
     campusCode: v.optional(campusValidator),
@@ -759,28 +631,23 @@ export const getSummary = query({
     }
 
     const activeItems = items.filter((item) => item.isActive);
-    const lowStockItems = activeItems.filter(
-      (item) => item.currentStock <= item.reorderLevel
-    );
+    const inactiveItems = items.filter((item) => !item.isActive);
+    const lowStockItems = activeItems.filter((item) => item.currentStock <= item.reorderLevel);
+    const outOfStockItems = activeItems.filter((item) => item.currentStock <= 0);
 
     const totalStockValue = activeItems.reduce((sum, item) => {
-      const unitCost = item.averageUnitCost ?? item.lastUnitCost ?? 0;
-      return sum + item.currentStock * unitCost;
+      return sum + item.currentStock * getUnitCost(item);
     }, 0);
 
     const byCategory = activeItems.reduce(
-      (acc: Record<string, { count: number; stockValue: number }>, item) => {
+      (acc: Record<string, { count: number; stockValue: number; lowStockCount: number }>, item) => {
         if (!acc[item.category]) {
-          acc[item.category] = {
-            count: 0,
-            stockValue: 0,
-          };
+          acc[item.category] = { count: 0, stockValue: 0, lowStockCount: 0 };
         }
 
         acc[item.category].count += 1;
-        acc[item.category].stockValue +=
-          item.currentStock * (item.averageUnitCost ?? item.lastUnitCost ?? 0);
-
+        acc[item.category].stockValue += item.currentStock * getUnitCost(item);
+        if (item.currentStock <= item.reorderLevel) acc[item.category].lowStockCount += 1;
         return acc;
       },
       {}
@@ -789,18 +656,12 @@ export const getSummary = query({
     return {
       totalItems: items.length,
       activeItems: activeItems.length,
+      inactiveItems: inactiveItems.length,
       lowStockCount: lowStockItems.length,
+      outOfStockCount: outOfStockItems.length,
       totalStockValue,
       byCategory,
-      lowStockItems: lowStockItems.map((item) => ({
-        _id: item._id,
-        name: item.name,
-        category: item.category,
-        unit: item.unit,
-        campusCode: item.campusCode,
-        currentStock: item.currentStock,
-        reorderLevel: item.reorderLevel,
-      })),
+      lowStockItems: lowStockItems.map(shapeItem),
     };
   },
 });
