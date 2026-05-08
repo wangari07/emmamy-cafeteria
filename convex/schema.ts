@@ -309,6 +309,13 @@ export default defineSchema({
 
     notes: v.union(v.string(), v.null()),
 
+    entrySource: v.optional(
+      v.union(v.literal("MANUAL"), v.literal("AI_EXTRACTED"))
+    ),
+    aiConfidence: v.optional(v.union(v.number(), v.null())),
+    aiNeedsReview: v.optional(v.boolean()),
+    aiLineIndex: v.optional(v.union(v.number(), v.null())),
+
     createdAt: v.string(),
     updatedAt: v.string(),
   })

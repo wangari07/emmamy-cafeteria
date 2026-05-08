@@ -1,4 +1,5 @@
-import { query, mutation } from "./_generated/server";
+import { query, mutation, action } from "./_generated/server";
+import { api } from "./_generated/api";
 import { v } from "convex/values";
 
 const campusValidator = v.union(
@@ -38,6 +39,88 @@ function now() {
 
 function cleanText(value: string) {
   return value.trim();
+}
+
+function normalizeCategory(value?: string | null):
+  | "LUNCH"
+  | "SNACK"
+  | "DRINK"
+  | "FRUIT"
+  | "TEA"
+  | "SUPPLY"
+  | "OTHER" {
+  const raw = (value || "").toUpperCase().trim();
+
+  if (raw.includes("LUNCH") || raw.includes("RICE") || raw.includes("UGALI") || raw.includes("BEANS") || raw.includes("MAIZE") || raw.includes("FLOUR")) return "LUNCH";
+  if (raw.includes("TEA") || raw.includes("MILK") || raw.includes("SUGAR")) return "TEA";
+  if (raw.includes("SNACK") || raw.includes("BREAD") || raw.includes("BISCUIT") || raw.includes("CAKE")) return "SNACK";
+  if (raw.includes("FRUIT") || raw.includes("BANANA") || raw.includes("APPLE") || raw.includes("ORANGE") || raw.includes("MANGO")) return "FRUIT";
+  if (raw.includes("DRINK") || raw.includes("JUICE") || raw.includes("WATER")) return "DRINK";
+  if (raw.includes("SUPPLY") || raw.includes("SOAP") || raw.includes("TISSUE") || raw.includes("CLEAN")) return "SUPPLY";
+
+  return "OTHER";
+}
+
+function normalizeMatchText(value?: string | null) {
+  return (value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function guessUnit(value?: string | null) {
+  const unit = (value || "").trim().toLowerCase();
+  if (!unit) return "pcs";
+  if (["kg", "kgs", "kilogram", "kilograms"].includes(unit)) return "kg";
+  if (["g", "gram", "grams"].includes(unit)) return "g";
+  if (["l", "lt", "ltr", "litre", "litres", "liter", "liters"].includes(unit)) return "litres";
+  if (["ml", "millilitre", "millilitres"].includes(unit)) return "ml";
+  if (["pc", "pcs", "piece", "pieces", "item", "items"].includes(unit)) return "pcs";
+  if (["tray", "trays"].includes(unit)) return "trays";
+  if (["crate", "crates"].includes(unit)) return "crates";
+  if (["packet", "packets", "pkt", "pkts"].includes(unit)) return "packets";
+  if (["bag", "bags", "sack", "sacks"].includes(unit)) return "bags";
+  return unit;
+}
+
+function parseJsonFromAiText(text: string) {
+  const cleaned = text
+    .trim()
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/```$/i, "")
+    .trim();
+
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const first = cleaned.indexOf("{");
+    const last = cleaned.lastIndexOf("}");
+
+    if (first === -1 || last === -1 || last <= first) {
+      throw new Error("AI did not return valid JSON.");
+    }
+
+    return JSON.parse(cleaned.slice(first, last + 1));
+  }
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer) {
+  const maybeBuffer = (globalThis as any).Buffer;
+
+  if (maybeBuffer) {
+    return maybeBuffer.from(buffer).toString("base64");
+  }
+
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  const chunkSize = 0x8000;
+
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+
+  return btoa(binary);
 }
 
 function assertBatchNotDeleted(batch: any) {
@@ -395,6 +478,11 @@ export const addItem = mutation({
 
       notes: args.notes?.trim() || null,
 
+      entrySource: "MANUAL",
+      aiConfidence: null,
+      aiNeedsReview: false,
+      aiLineIndex: null,
+
       createdAt,
       updatedAt: createdAt,
     });
@@ -619,6 +707,368 @@ export const deleteItem = mutation({
       success: true,
       purchaseItemId: args.purchaseItemId,
     };
+  },
+});
+
+
+/**
+ * 🔹 SAVE AI EXTRACTED ITEMS
+ *
+ * This mutation stores AI output as reviewable purchase item rows.
+ * It does not approve the batch and it does not update inventory stock.
+ */
+export const saveAiExtractedItems = mutation({
+  args: {
+    purchaseBatchId: v.id("purchaseBatches"),
+    supplierName: v.optional(v.union(v.string(), v.null())),
+    shoppingDate: v.optional(v.union(v.string(), v.null())),
+    aiConfidence: v.optional(v.union(v.number(), v.null())),
+    aiExtractedJson: v.optional(v.any()),
+    actor: v.optional(v.string()),
+    replaceExistingAiItems: v.optional(v.boolean()),
+    items: v.array(
+      v.object({
+        itemNameRaw: v.string(),
+        normalizedItemName: v.optional(v.string()),
+        category: inventoryCategoryValidator,
+        quantity: v.number(),
+        unit: v.string(),
+        totalCost: v.number(),
+        aiConfidence: v.optional(v.union(v.number(), v.null())),
+        notes: v.optional(v.string()),
+      })
+    ),
+  },
+
+  handler: async (ctx, args) => {
+    const batch = await ctx.db.get(args.purchaseBatchId);
+
+    if (!batch) {
+      throw new Error("Purchase batch not found.");
+    }
+
+    assertBatchNotDeleted(batch);
+
+    if (batch.receiptStatus === "APPROVED") {
+      throw new Error("Cannot extract AI items for an approved purchase batch.");
+    }
+
+    if (batch.receiptStatus === "REJECTED") {
+      throw new Error("Cannot extract AI items for a rejected purchase batch.");
+    }
+
+    if (args.items.length === 0) {
+      throw new Error("AI did not find any receipt items to save.");
+    }
+
+    const createdAt = now();
+
+    const existingItems = await ctx.db
+      .query("purchaseItems")
+      .withIndex("by_purchaseBatchId", (q) =>
+        q.eq("purchaseBatchId", args.purchaseBatchId)
+      )
+      .collect();
+
+    if (args.replaceExistingAiItems ?? true) {
+      for (const item of existingItems) {
+        if ((item as any).entrySource === "AI_EXTRACTED") {
+          await ctx.db.delete(item._id);
+        }
+      }
+    }
+
+    const remainingItems = (args.replaceExistingAiItems ?? true)
+      ? existingItems.filter((item) => (item as any).entrySource !== "AI_EXTRACTED")
+      : existingItems;
+
+    const inventoryItems = await ctx.db
+      .query("inventoryItems")
+      .withIndex("by_campusCode", (q) => q.eq("campusCode", batch.campusCode))
+      .collect();
+
+    let aiTotal = 0;
+    const savedItems = [];
+
+    for (let index = 0; index < args.items.length; index += 1) {
+      const raw = args.items[index];
+      const itemNameRaw = cleanText(raw.itemNameRaw);
+      const normalizedItemName = cleanText(raw.normalizedItemName || raw.itemNameRaw);
+      const unit = guessUnit(raw.unit);
+      const quantity = Number(raw.quantity);
+      const totalCost = Number(raw.totalCost);
+      const confidence = raw.aiConfidence ?? args.aiConfidence ?? null;
+
+      if (!itemNameRaw || !normalizedItemName) continue;
+      if (!Number.isFinite(quantity) || quantity <= 0) continue;
+      if (!Number.isFinite(totalCost) || totalCost < 0) continue;
+
+      const unitCost = totalCost / quantity;
+      aiTotal += totalCost;
+
+      const normalizedForMatch = normalizeMatchText(normalizedItemName);
+      const matchedInventoryItem = inventoryItems.find((item) => {
+        if (!item.isActive) return false;
+        const inventoryName = normalizeMatchText(item.name);
+        return (
+          inventoryName === normalizedForMatch ||
+          inventoryName.includes(normalizedForMatch) ||
+          normalizedForMatch.includes(inventoryName)
+        );
+      });
+
+      const needsReview = !matchedInventoryItem || confidence === null || confidence < 0.72;
+
+      const purchaseItemId = await ctx.db.insert("purchaseItems", {
+        purchaseBatchId: args.purchaseBatchId,
+        inventoryItemId: matchedInventoryItem?._id ?? null,
+        itemNameRaw,
+        normalizedItemName,
+        category: raw.category,
+        quantity,
+        unit,
+        totalCost,
+        unitCost,
+        notes:
+          raw.notes?.trim() ||
+          (needsReview ? "AI extracted item needs staff review/linking." : "AI extracted item."),
+        entrySource: "AI_EXTRACTED",
+        aiConfidence: confidence,
+        aiNeedsReview: needsReview,
+        aiLineIndex: index,
+        createdAt,
+        updatedAt: createdAt,
+      });
+
+      savedItems.push({
+        purchaseItemId,
+        itemNameRaw,
+        normalizedItemName,
+        inventoryItemId: matchedInventoryItem?._id ?? null,
+        inventoryItemName: matchedInventoryItem?.name ?? null,
+        needsReview,
+        aiConfidence: confidence,
+      });
+    }
+
+    if (savedItems.length === 0) {
+      throw new Error("AI output could not be saved because no valid receipt rows were found.");
+    }
+
+    const manualTotal = remainingItems.reduce((sum, item) => sum + item.totalCost, 0);
+    const nextTotalAmount = manualTotal + aiTotal;
+
+    const patch: any = {
+      receiptEntryMode: "AI_EXTRACTED",
+      receiptStatus: "AI_EXTRACTED",
+      aiExtractedJson: args.aiExtractedJson ?? null,
+      aiConfidence: args.aiConfidence ?? null,
+      reviewNotes: "AI extracted receipt items. Staff must review and link items before approval.",
+      totalAmount: nextTotalAmount,
+      updatedAt: createdAt,
+    };
+
+    if (args.supplierName !== undefined) {
+      const supplierName = args.supplierName?.trim();
+      if (supplierName) patch.supplierName = supplierName;
+    }
+
+    if (args.shoppingDate !== undefined) {
+      const shoppingDate = args.shoppingDate?.trim();
+      if (shoppingDate) patch.shoppingDate = shoppingDate;
+    }
+
+    await ctx.db.patch(args.purchaseBatchId, patch);
+
+    await createActivityLog(ctx, {
+      actionType: "PURCHASE_RECEIPT_AI_EXTRACTED",
+      purchaseBatchId: args.purchaseBatchId,
+      actor: args.actor ?? null,
+      details: `AI extracted ${savedItems.length} receipt item(s) for ${batch.batchNumber}`,
+      targetCampusCode: batch.campusCode,
+      quantity: savedItems.length,
+      amount: nextTotalAmount,
+    });
+
+    return {
+      success: true,
+      purchaseBatchId: args.purchaseBatchId,
+      savedCount: savedItems.length,
+      totalAmount: nextTotalAmount,
+      items: savedItems,
+    };
+  },
+});
+
+/**
+ * 🔹 EXTRACT RECEIPT WITH AI
+ *
+ * Uses the uploaded receipt file and Gemini API to extract draft purchase rows.
+ * The saved rows still need staff review before approval.
+ */
+export const extractReceiptWithAi = action({
+  args: {
+    purchaseBatchId: v.id("purchaseBatches"),
+    actor: v.optional(v.string()),
+  },
+
+  handler: async (ctx, args): Promise<any> => {
+    const env = ((globalThis as any).process?.env ?? {}) as Record<string, string | undefined>;
+    const apiKey = env.GEMINI_API_KEY || env.GOOGLE_AI_API_KEY;
+
+    if (!apiKey) {
+      throw new Error("Missing GEMINI_API_KEY or GOOGLE_AI_API_KEY in Convex environment variables.");
+    }
+
+    const batch: any = await ctx.runQuery(api.purchases.getBatch, {
+      purchaseBatchId: args.purchaseBatchId,
+    });
+
+    if (!batch) {
+      throw new Error("Purchase batch not found.");
+    }
+
+    if (batch.isDeleted === true) {
+      throw new Error("This purchase batch has been archived/deleted and cannot be changed.");
+    }
+
+    if (!batch.receiptStorageId) {
+      throw new Error("Upload a receipt image or PDF before running AI extraction.");
+    }
+
+    if (batch.receiptStatus === "APPROVED" || batch.receiptStatus === "REJECTED") {
+      throw new Error("Cannot extract AI items for an approved or rejected purchase batch.");
+    }
+
+    const receiptUrl = await ctx.storage.getUrl(batch.receiptStorageId);
+
+    if (!receiptUrl) {
+      throw new Error("Could not open the uploaded receipt file.");
+    }
+
+    const fileResponse = await fetch(receiptUrl);
+
+    if (!fileResponse.ok) {
+      throw new Error("Could not download the receipt file for AI extraction.");
+    }
+
+    const mimeType = batch.receiptMimeType || fileResponse.headers.get("content-type") || "image/jpeg";
+    const arrayBuffer = await fileResponse.arrayBuffer();
+    const base64File = arrayBufferToBase64(arrayBuffer);
+
+    const prompt = `
+You are extracting shopping receipt data for a Kenyan school cafeteria inventory system.
+Return ONLY valid JSON. Do not include markdown.
+
+Required JSON shape:
+{
+  "supplierName": string | null,
+  "shoppingDate": "YYYY-MM-DD" | null,
+  "receiptTotal": number | null,
+  "aiConfidence": number,
+  "items": [
+    {
+      "itemNameRaw": string,
+      "normalizedItemName": string,
+      "category": "LUNCH" | "TEA" | "SNACK" | "FRUIT" | "DRINK" | "SUPPLY" | "OTHER",
+      "quantity": number,
+      "unit": string,
+      "totalCost": number,
+      "aiConfidence": number,
+      "notes": string | null
+    }
+  ]
+}
+
+Rules:
+- Use Kenyan shillings for all money values but return numbers only.
+- If quantity is not explicit, use 1 and explain in notes.
+- If a line is unclear, still include it with lower aiConfidence and notes.
+- Do not include VAT/subtotal/payment lines as inventory items unless they are actual products.
+- Normalize common units to kg, g, litres, ml, pcs, trays, crates, packets, bags.
+- Choose category based on school kitchen use.
+`;
+
+    const model = env.GEMINI_MODEL || "gemini-2.0-flash";
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: "user",
+              parts: [
+                { text: prompt },
+                {
+                  inlineData: {
+                    mimeType,
+                    data: base64File,
+                  },
+                },
+              ],
+            },
+          ],
+          generationConfig: {
+            temperature: 0.1,
+            responseMimeType: "application/json",
+          },
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`AI receipt extraction failed: ${errorText.slice(0, 500)}`);
+    }
+
+    const aiResponse = await response.json();
+    const textParts = aiResponse?.candidates?.[0]?.content?.parts ?? [];
+    const aiText = textParts.map((part: any) => part.text || "").join("\n").trim();
+
+    if (!aiText) {
+      throw new Error("AI did not return extraction text.");
+    }
+
+    const parsed = parseJsonFromAiText(aiText);
+    const rawItems = Array.isArray(parsed.items) ? parsed.items : [];
+
+    const cleanedItems = rawItems
+      .map((item: any) => ({
+        itemNameRaw: String(item.itemNameRaw || item.name || item.description || "").trim(),
+        normalizedItemName: String(item.normalizedItemName || item.itemNameRaw || item.name || "").trim(),
+        category: normalizeCategory(item.category),
+        quantity: Number(item.quantity || 1),
+        unit: guessUnit(item.unit || "pcs"),
+        totalCost: Number(item.totalCost || item.total || item.amount || 0),
+        aiConfidence:
+          item.aiConfidence === undefined || item.aiConfidence === null
+            ? parsed.aiConfidence ?? null
+            : Number(item.aiConfidence),
+        notes: item.notes ? String(item.notes) : undefined,
+      }))
+      .filter((item: any) => item.itemNameRaw && item.quantity > 0 && item.totalCost >= 0);
+
+    if (cleanedItems.length === 0) {
+      throw new Error("AI could not detect receipt line items. Try uploading a clearer receipt image.");
+    }
+
+    return await ctx.runMutation(api.purchases.saveAiExtractedItems, {
+      purchaseBatchId: args.purchaseBatchId,
+      supplierName: parsed.supplierName ? String(parsed.supplierName) : null,
+      shoppingDate: parsed.shoppingDate ? String(parsed.shoppingDate) : null,
+      aiConfidence:
+        parsed.aiConfidence === undefined || parsed.aiConfidence === null
+          ? null
+          : Number(parsed.aiConfidence),
+      aiExtractedJson: parsed,
+      actor: args.actor,
+      replaceExistingAiItems: true,
+      items: cleanedItems,
+    });
   },
 });
 
