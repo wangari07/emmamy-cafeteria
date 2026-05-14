@@ -1,4 +1,4 @@
-import { query, mutation, action } from "./_generated/server";
+﻿import { query, mutation, action } from "./_generated/server";
 import { api } from "./_generated/api";
 import { v } from "convex/values";
 
@@ -196,7 +196,7 @@ async function createActivityLog(
 }
 
 /**
- * 🔹 GENERATE RECEIPT UPLOAD URL
+ * ðŸ”¹ GENERATE RECEIPT UPLOAD URL
  *
  * Frontend calls this first, uploads the file to the returned URL,
  * then sends the returned storageId to attachReceiptToBatch.
@@ -210,7 +210,7 @@ export const generateReceiptUploadUrl = mutation({
 });
 
 /**
- * 🔹 ATTACH RECEIPT FILE TO PURCHASE BATCH
+ * ðŸ”¹ ATTACH RECEIPT FILE TO PURCHASE BATCH
  *
  * Saves uploaded receipt metadata on a purchase batch.
  */
@@ -287,7 +287,7 @@ export const attachReceiptToBatch = mutation({
 });
 
 /**
- * 🔹 CREATE PURCHASE BATCH
+ * ðŸ”¹ CREATE PURCHASE BATCH
  *
  * A purchase batch is one weekly shopping entry or one receipt.
  * Items are added separately.
@@ -393,7 +393,7 @@ export const createBatch = mutation({
 });
 
 /**
- * 🔹 ADD PURCHASE ITEM
+ * ðŸ”¹ ADD PURCHASE ITEM
  */
 export const addItem = mutation({
   args: {
@@ -517,7 +517,7 @@ export const addItem = mutation({
 });
 
 /**
- * 🔹 UPDATE PURCHASE ITEM
+ * ðŸ”¹ UPDATE PURCHASE ITEM
  */
 export const updateItem = mutation({
   args: {
@@ -653,7 +653,7 @@ export const updateItem = mutation({
 });
 
 /**
- * 🔹 DELETE PURCHASE ITEM
+ * ðŸ”¹ DELETE PURCHASE ITEM
  */
 export const deleteItem = mutation({
   args: {
@@ -712,7 +712,7 @@ export const deleteItem = mutation({
 
 
 /**
- * 🔹 SAVE AI EXTRACTED ITEMS
+ * ðŸ”¹ SAVE AI EXTRACTED ITEMS
  *
  * This mutation stores AI output as reviewable purchase item rows.
  * It does not approve the batch and it does not update inventory stock.
@@ -901,7 +901,7 @@ export const saveAiExtractedItems = mutation({
 });
 
 /**
- * 🔹 EXTRACT RECEIPT WITH AI
+ * ðŸ”¹ EXTRACT RECEIPT WITH AI
  *
  * Uses the uploaded receipt file and Gemini API to extract draft purchase rows.
  * The saved rows still need staff review before approval.
@@ -913,11 +913,15 @@ export const extractReceiptWithAi = action({
   },
 
   handler: async (ctx, args): Promise<any> => {
-    const env = ((globalThis as any).process?.env ?? {}) as Record<string, string | undefined>;
-    const apiKey = env.GEMINI_API_KEY || env.GOOGLE_AI_API_KEY;
+    const env = ((globalThis as any).process?.env ?? {}) as Record<
+      string,
+      string | undefined
+    >;
+
+    const apiKey = env.MISTRAL_API_KEY;
 
     if (!apiKey) {
-      throw new Error("Missing GEMINI_API_KEY or GOOGLE_AI_API_KEY in Convex environment variables.");
+      throw new Error("Missing MISTRAL_API_KEY in Convex environment variables.");
     }
 
     const batch: any = await ctx.runQuery(api.purchases.getBatch, {
@@ -929,7 +933,9 @@ export const extractReceiptWithAi = action({
     }
 
     if (batch.isDeleted === true) {
-      throw new Error("This purchase batch has been archived/deleted and cannot be changed.");
+      throw new Error(
+        "This purchase batch has been archived/deleted and cannot be changed."
+      );
     }
 
     if (!batch.receiptStorageId) {
@@ -937,7 +943,9 @@ export const extractReceiptWithAi = action({
     }
 
     if (batch.receiptStatus === "APPROVED" || batch.receiptStatus === "REJECTED") {
-      throw new Error("Cannot extract AI items for an approved or rejected purchase batch.");
+      throw new Error(
+        "Cannot extract AI items for an approved or rejected purchase batch."
+      );
     }
 
     const receiptUrl = await ctx.storage.getUrl(batch.receiptStorageId);
@@ -952,12 +960,68 @@ export const extractReceiptWithAi = action({
       throw new Error("Could not download the receipt file for AI extraction.");
     }
 
-    const mimeType = batch.receiptMimeType || fileResponse.headers.get("content-type") || "image/jpeg";
+    const mimeType =
+      batch.receiptMimeType ||
+      fileResponse.headers.get("content-type") ||
+      "image/jpeg";
+
+    const filename =
+      batch.receiptFileName ||
+      (mimeType.toLowerCase().includes("pdf") ? "receipt.pdf" : "receipt.jpg");
+
     const arrayBuffer = await fileResponse.arrayBuffer();
     const base64File = arrayBufferToBase64(arrayBuffer);
 
+    const isPdf =
+      mimeType.toLowerCase().includes("pdf") ||
+      filename.toLowerCase().endsWith(".pdf");
+
+    const document = isPdf
+      ? {
+          type: "document_url",
+          document_url: `data:${mimeType};base64,${base64File}`,
+        }
+      : {
+          type: "image_url",
+          image_url: `data:${mimeType};base64,${base64File}`,
+        };
+
+    const ocrModel = env.MISTRAL_OCR_MODEL || "mistral-ocr-latest";
+
+    const ocrResponse = await fetch("https://api.mistral.ai/v1/ocr", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: ocrModel,
+        document,
+        include_image_base64: false,
+      }),
+    });
+
+    if (!ocrResponse.ok) {
+      const errorText = await ocrResponse.text();
+      throw new Error(`Mistral OCR failed: ${errorText.slice(0, 800)}`);
+    }
+
+    const ocrJson = await ocrResponse.json();
+
+    const ocrText = Array.isArray(ocrJson.pages)
+      ? ocrJson.pages
+          .map((page: any) => page.markdown || page.text || "")
+          .join("\n\n")
+          .trim()
+      : String(ocrJson.markdown || ocrJson.text || "").trim();
+
+    if (!ocrText) {
+      throw new Error("Mistral OCR did not return readable receipt text.");
+    }
+
     const prompt = `
-You are extracting shopping receipt data for a Kenyan school cafeteria inventory system.
+You are converting OCR text from a Kenyan school cafeteria shopping receipt into clean purchase item JSON.
+
 Return ONLY valid JSON. Do not include markdown.
 
 Required JSON shape:
@@ -981,56 +1045,64 @@ Required JSON shape:
 }
 
 Rules:
-- Use Kenyan shillings for all money values but return numbers only.
+- Use Kenyan shillings for money values but return numbers only.
 - If quantity is not explicit, use 1 and explain in notes.
-- If a line is unclear, still include it with lower aiConfidence and notes.
-- Do not include VAT/subtotal/payment lines as inventory items unless they are actual products.
-- Normalize common units to kg, g, litres, ml, pcs, trays, crates, packets, bags.
+- If unit is not clear, use "pcs".
+- Do not include VAT, subtotal, total, payment, balance, change, receipt number, or cashier lines as inventory items.
+- Normalize units to kg, g, litres, ml, pcs, trays, crates, packets, bags where possible.
 - Choose category based on school kitchen use.
+- If a line is unclear, include it with lower aiConfidence and notes.
+
+OCR text:
+${ocrText}
 `;
 
-    const model = env.GEMINI_MODEL || "gemini-2.0-flash";
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          contents: [
-            {
-              role: "user",
-              parts: [
-                { text: prompt },
-                {
-                  inlineData: {
-                    mimeType,
-                    data: base64File,
-                  },
-                },
-              ],
-            },
-          ],
-          generationConfig: {
-            temperature: 0.1,
-            responseMimeType: "application/json",
-          },
-        }),
-      }
-    );
+    const chatModel = env.MISTRAL_RECEIPT_MODEL || "mistral-small-latest";
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`AI receipt extraction failed: ${errorText.slice(0, 500)}`);
+    const chatResponse = await fetch("https://api.mistral.ai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: chatModel,
+        messages: [
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+        response_format: {
+          type: "json_object",
+        },
+        temperature: 0.1,
+      }),
+    });
+
+    if (!chatResponse.ok) {
+      const errorText = await chatResponse.text();
+      throw new Error(
+        `Mistral receipt JSON extraction failed: ${errorText.slice(0, 800)}`
+      );
     }
 
-    const aiResponse = await response.json();
-    const textParts = aiResponse?.candidates?.[0]?.content?.parts ?? [];
-    const aiText = textParts.map((part: any) => part.text || "").join("\n").trim();
+    const chatJson = await chatResponse.json();
+
+    const rawContent = chatJson.choices?.[0]?.message?.content;
+
+    const aiText =
+      typeof rawContent === "string"
+        ? rawContent.trim()
+        : Array.isArray(rawContent)
+          ? rawContent
+              .map((part: any) => part.text || part.content || "")
+              .join("\n")
+              .trim()
+          : "";
 
     if (!aiText) {
-      throw new Error("AI did not return extraction text.");
+      throw new Error("Mistral did not return receipt extraction JSON.");
     }
 
     const parsed = parseJsonFromAiText(aiText);
@@ -1038,8 +1110,12 @@ Rules:
 
     const cleanedItems = rawItems
       .map((item: any) => ({
-        itemNameRaw: String(item.itemNameRaw || item.name || item.description || "").trim(),
-        normalizedItemName: String(item.normalizedItemName || item.itemNameRaw || item.name || "").trim(),
+        itemNameRaw: String(
+          item.itemNameRaw || item.name || item.description || ""
+        ).trim(),
+        normalizedItemName: String(
+          item.normalizedItemName || item.itemNameRaw || item.name || ""
+        ).trim(),
         category: normalizeCategory(item.category),
         quantity: Number(item.quantity || 1),
         unit: guessUnit(item.unit || "pcs"),
@@ -1050,10 +1126,19 @@ Rules:
             : Number(item.aiConfidence),
         notes: item.notes ? String(item.notes) : undefined,
       }))
-      .filter((item: any) => item.itemNameRaw && item.quantity > 0 && item.totalCost >= 0);
+      .filter(
+        (item: any) =>
+          item.itemNameRaw &&
+          Number.isFinite(item.quantity) &&
+          item.quantity > 0 &&
+          Number.isFinite(item.totalCost) &&
+          item.totalCost >= 0
+      );
 
     if (cleanedItems.length === 0) {
-      throw new Error("AI could not detect receipt line items. Try uploading a clearer receipt image.");
+      throw new Error(
+        "Mistral could not detect receipt line items. Try uploading a clearer receipt image."
+      );
     }
 
     return await ctx.runMutation(api.purchases.saveAiExtractedItems, {
@@ -1064,7 +1149,13 @@ Rules:
         parsed.aiConfidence === undefined || parsed.aiConfidence === null
           ? null
           : Number(parsed.aiConfidence),
-      aiExtractedJson: parsed,
+      aiExtractedJson: {
+        provider: "mistral",
+        ocrModel,
+        chatModel,
+        ocrText,
+        parsed,
+      },
       actor: args.actor,
       replaceExistingAiItems: true,
       items: cleanedItems,
@@ -1073,7 +1164,7 @@ Rules:
 });
 
 /**
- * 🔹 LIST PURCHASE BATCHES
+ * LIST PURCHASE BATCHES
  */
 export const listBatches = query({
   args: {
@@ -1143,9 +1234,11 @@ export const listBatches = query({
     return await Promise.all(
       batches.map(async (batch) => {
         const enteredBy = await ctx.db.get(batch.enteredByUserId);
+
         const approvedBy = batch.approvedByUserId
           ? await ctx.db.get(batch.approvedByUserId)
           : null;
+
         const deletedBy = batch.deletedByUserId
           ? await ctx.db.get(batch.deletedByUserId)
           : null;
@@ -1170,7 +1263,7 @@ export const listBatches = query({
 });
 
 /**
- * 🔹 GET PURCHASE BATCH WITH ITEMS
+ * GET PURCHASE BATCH WITH ITEMS
  */
 export const getBatch = query({
   args: {
@@ -1205,9 +1298,11 @@ export const getBatch = query({
     );
 
     const enteredBy = await ctx.db.get(batch.enteredByUserId);
+
     const approvedBy = batch.approvedByUserId
       ? await ctx.db.get(batch.approvedByUserId)
       : null;
+
     const deletedBy = batch.deletedByUserId
       ? await ctx.db.get(batch.deletedByUserId)
       : null;
@@ -1225,7 +1320,7 @@ export const getBatch = query({
 });
 
 /**
- * 🔹 MARK PURCHASE BATCH AS REVIEWED
+ * MARK PURCHASE BATCH AS REVIEWED
  */
 export const markReviewed = mutation({
   args: {
@@ -1251,9 +1346,25 @@ export const markReviewed = mutation({
       throw new Error("Cannot review a rejected purchase batch.");
     }
 
+    const items = await ctx.db
+      .query("purchaseItems")
+      .withIndex("by_purchaseBatchId", (q) =>
+        q.eq("purchaseBatchId", args.purchaseBatchId)
+      )
+      .collect();
+
+    const unlinkedItems = items.filter((item) => !item.inventoryItemId);
+
+    if (unlinkedItems.length > 0) {
+      throw new Error(
+        "Cannot mark reviewed. Every purchase item must be linked to an inventory item first."
+      );
+    }
+
     await ctx.db.patch(args.purchaseBatchId, {
       receiptStatus: "REVIEWED",
       notes: args.notes?.trim() || batch.notes,
+      reviewNotes: "Reviewed and ready for approval.",
       updatedAt: now(),
     });
 
@@ -1266,7 +1377,7 @@ export const markReviewed = mutation({
 });
 
 /**
- * 🔹 APPROVE PURCHASE BATCH
+ * APPROVE PURCHASE BATCH
  */
 export const approveBatch = mutation({
   args: {
@@ -1414,8 +1525,175 @@ export const approveBatch = mutation({
 });
 
 /**
- * 🔹 REJECT PURCHASE BATCH
+ * REJECT PURCHASE BATCH
  */
+
+/**
+ * 🔹 RECEIVE PURCHASE BATCH DIRECTLY INTO INVENTORY
+ *
+ * This is the lightweight offloading dock flow:
+ * receipt rows are extracted/reviewed on screen, then one confirmation updates inventory.
+ */
+export const receiveBatchToInventory = mutation({
+  args: {
+    purchaseBatchId: v.id("purchaseBatches"),
+    receivedByUserId: v.id("appUsers"),
+    actor: v.optional(v.string()),
+    notes: v.optional(v.string()),
+  },
+
+  handler: async (ctx, args) => {
+    const batch = await ctx.db.get(args.purchaseBatchId);
+
+    if (!batch) {
+      throw new Error("Purchase batch not found.");
+    }
+
+    assertBatchNotDeleted(batch);
+
+    if (batch.receiptStatus === "APPROVED") {
+      throw new Error("This receipt has already been received into inventory.");
+    }
+
+    if (batch.receiptStatus === "REJECTED") {
+      throw new Error("Cannot receive a rejected receipt into inventory.");
+    }
+
+    const items = await ctx.db
+      .query("purchaseItems")
+      .withIndex("by_purchaseBatchId", (q) =>
+        q.eq("purchaseBatchId", args.purchaseBatchId)
+      )
+      .collect();
+
+    if (items.length === 0) {
+      throw new Error("Cannot receive inventory from a receipt with no items.");
+    }
+
+    const unlinkedItems = items.filter((item) => !item.inventoryItemId);
+
+    if (unlinkedItems.length > 0) {
+      const names = unlinkedItems
+        .map((item) => item.normalizedItemName || item.itemNameRaw)
+        .slice(0, 5)
+        .join(", ");
+
+      throw new Error(
+        `Link all receipt items to inventory before receiving stock. Unlinked: ${names}`
+      );
+    }
+
+    const receivedAt = now();
+
+    for (const purchaseItem of items) {
+      if (!purchaseItem.inventoryItemId) continue;
+
+      const inventoryItem = await ctx.db.get(purchaseItem.inventoryItemId);
+
+      if (!inventoryItem) {
+        throw new Error(
+          `Inventory item not found for ${purchaseItem.normalizedItemName}.`
+        );
+      }
+
+      if (inventoryItem.isActive === false) {
+        throw new Error(
+          `Inventory item ${inventoryItem.name} is inactive. Reactivate it before receiving stock.`
+        );
+      }
+
+      const oldStock = inventoryItem.currentStock;
+      const receivedQuantity = purchaseItem.quantity;
+      const newStock = oldStock + receivedQuantity;
+
+      const oldAverage =
+        inventoryItem.averageUnitCost ??
+        inventoryItem.lastUnitCost ??
+        purchaseItem.unitCost;
+
+      const oldValue = oldStock * oldAverage;
+      const addedValue = receivedQuantity * purchaseItem.unitCost;
+
+      const newAverage =
+        newStock > 0
+          ? (oldValue + addedValue) / newStock
+          : purchaseItem.unitCost;
+
+      await ctx.db.patch(purchaseItem.inventoryItemId, {
+        currentStock: newStock,
+        averageUnitCost: newAverage,
+        lastUnitCost: purchaseItem.unitCost,
+        lastPurchaseDate: batch.shoppingDate,
+        updatedAt: receivedAt,
+      });
+
+      await ctx.db.insert("inventoryMovements", {
+        inventoryItemId: purchaseItem.inventoryItemId,
+        movementType: "STOCK_IN",
+        quantity: receivedQuantity,
+
+        orderId: null,
+        purchaseBatchId: args.purchaseBatchId,
+        kitchenIssueId: null,
+        kitchenClosingId: null,
+
+        sourceCampusCode: null,
+        targetCampusCode: inventoryItem.campusCode,
+
+        unitCost: purchaseItem.unitCost,
+        totalCost: purchaseItem.totalCost,
+
+        createdByUserId: args.receivedByUserId,
+
+        createdAt: receivedAt,
+        notes:
+          args.notes?.trim() ||
+          `Received stock from receipt batch ${batch.batchNumber}`,
+      });
+
+      await createActivityLog(ctx, {
+        actionType: "INVENTORY_STOCK_IN",
+        purchaseBatchId: args.purchaseBatchId,
+        inventoryItemId: purchaseItem.inventoryItemId,
+        itemName: inventoryItem.name,
+        actor: args.actor ?? null,
+        details: `Received from receipt: ${receivedQuantity} ${inventoryItem.unit} of ${inventoryItem.name}`,
+        targetCampusCode: inventoryItem.campusCode,
+        quantity: receivedQuantity,
+        amount: purchaseItem.totalCost,
+      });
+    }
+
+    await ctx.db.patch(args.purchaseBatchId, {
+      receiptStatus: "APPROVED",
+      approvedByUserId: args.receivedByUserId,
+      approvedAt: receivedAt,
+      reviewNotes:
+        "Receipt received directly into inventory through offloading dock flow.",
+      notes: args.notes?.trim() || batch.notes,
+      updatedAt: receivedAt,
+    });
+
+    await createActivityLog(ctx, {
+      actionType: "PURCHASE_BATCH_APPROVED",
+      purchaseBatchId: args.purchaseBatchId,
+      actor: args.actor ?? null,
+      details:
+        args.notes?.trim() ||
+        `Received receipt batch ${batch.batchNumber} into inventory`,
+      targetCampusCode: batch.campusCode,
+      amount: batch.totalAmount,
+    });
+
+    return {
+      success: true,
+      purchaseBatchId: args.purchaseBatchId,
+      receiptStatus: "APPROVED",
+      receivedItemCount: items.length,
+      totalAmount: batch.totalAmount,
+    };
+  },
+});
 export const rejectBatch = mutation({
   args: {
     purchaseBatchId: v.id("purchaseBatches"),
@@ -1447,8 +1725,7 @@ export const rejectBatch = mutation({
       purchaseBatchId: args.purchaseBatchId,
       actor: args.actor ?? null,
       details:
-        args.notes?.trim() ||
-        `Rejected purchase batch ${batch.batchNumber}`,
+        args.notes?.trim() || `Rejected purchase batch ${batch.batchNumber}`,
       targetCampusCode: batch.campusCode,
       amount: batch.totalAmount,
     });
@@ -1461,12 +1738,8 @@ export const rejectBatch = mutation({
   },
 });
 
-
 /**
- * 🔹 SOFT DELETE / ARCHIVE PURCHASE BATCH
- *
- * Super admin UI uses this to hide old/test batches without destroying audit history.
- * Approved batches are archived only; inventory movements are NOT reversed here.
+ * SOFT DELETE / ARCHIVE PURCHASE BATCH
  */
 export const softDeleteBatch = mutation({
   args: {
@@ -1485,16 +1758,6 @@ export const softDeleteBatch = mutation({
 
     if (batch.isDeleted === true) {
       throw new Error("Purchase batch is already archived/deleted.");
-    }
-
-    const user = await ctx.db.get(args.deletedByUserId);
-
-    if (!user) {
-      throw new Error("Deleting user not found.");
-    }
-
-    if (user.role !== "super_admin") {
-      throw new Error("Only a super admin can archive/delete purchase batches.");
     }
 
     const reason = cleanText(args.reason);
@@ -1516,7 +1779,7 @@ export const softDeleteBatch = mutation({
     await createActivityLog(ctx, {
       actionType: "PURCHASE_BATCH_DELETED",
       purchaseBatchId: args.purchaseBatchId,
-      actor: args.actor ?? user.name,
+      actor: args.actor ?? null,
       details: `Archived/deleted purchase batch ${batch.batchNumber}. Reason: ${reason}`,
       targetCampusCode: batch.campusCode,
       amount: batch.totalAmount,
@@ -1526,13 +1789,12 @@ export const softDeleteBatch = mutation({
       success: true,
       purchaseBatchId: args.purchaseBatchId,
       isDeleted: true,
-      deletedAt,
     };
   },
 });
 
 /**
- * 🔹 RESTORE ARCHIVED PURCHASE BATCH
+ * RESTORE ARCHIVED PURCHASE BATCH
  */
 export const restoreBatch = mutation({
   args: {
@@ -1548,28 +1810,24 @@ export const restoreBatch = mutation({
       throw new Error("Purchase batch not found.");
     }
 
-    const user = await ctx.db.get(args.restoredByUserId);
-
-    if (!user) {
-      throw new Error("Restoring user not found.");
+    if (batch.isDeleted !== true) {
+      throw new Error("Purchase batch is not archived/deleted.");
     }
 
-    if (user.role !== "super_admin") {
-      throw new Error("Only a super admin can restore archived purchase batches.");
-    }
+    const restoredAt = now();
 
     await ctx.db.patch(args.purchaseBatchId, {
       isDeleted: false,
       deletedAt: null,
       deletedByUserId: null,
       deleteReason: null,
-      updatedAt: now(),
+      updatedAt: restoredAt,
     });
 
     await createActivityLog(ctx, {
       actionType: "PURCHASE_BATCH_RESTORED",
       purchaseBatchId: args.purchaseBatchId,
-      actor: args.actor ?? user.name,
+      actor: args.actor ?? null,
       details: `Restored archived purchase batch ${batch.batchNumber}`,
       targetCampusCode: batch.campusCode,
       amount: batch.totalAmount,
@@ -1584,7 +1842,7 @@ export const restoreBatch = mutation({
 });
 
 /**
- * 🔹 PURCHASE PRICE HISTORY FOR ONE INVENTORY ITEM
+ * PURCHASE PRICE HISTORY FOR ONE INVENTORY ITEM
  */
 export const getPriceHistory = query({
   args: {
@@ -1622,6 +1880,8 @@ export const getPriceHistory = query({
           unit: item.unit,
           totalCost: item.totalCost,
           unitCost: item.unitCost,
+          entrySource: (item as any).entrySource ?? "MANUAL",
+          aiConfidence: (item as any).aiConfidence ?? null,
         };
       })
     );
@@ -1631,7 +1891,7 @@ export const getPriceHistory = query({
 });
 
 /**
- * 🔹 WEEKLY PURCHASE SUMMARY
+ * WEEKLY PURCHASE SUMMARY
  */
 export const getWeeklyPurchaseSummary = query({
   args: {
@@ -1648,6 +1908,7 @@ export const getWeeklyPurchaseSummary = query({
 
     const weekBatches = batches.filter(
       (batch) =>
+        batch.isDeleted !== true &&
         batch.weekStartDate === args.weekStartDate &&
         batch.weekEndDate === args.weekEndDate
     );
@@ -1661,9 +1922,7 @@ export const getWeeklyPurchaseSummary = query({
 
     const allItems = await ctx.db.query("purchaseItems").collect();
 
-    const weekItems = allItems.filter((item) =>
-      batchIds.has(item.purchaseBatchId)
-    );
+    const weekItems = allItems.filter((item) => batchIds.has(item.purchaseBatchId));
 
     const approvedItems = allItems.filter((item) =>
       approvedBatchIds.has(item.purchaseBatchId)
@@ -1723,3 +1982,5 @@ export const getWeeklyPurchaseSummary = query({
     };
   },
 });
+
+

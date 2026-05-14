@@ -151,6 +151,7 @@ export function Purchases() {
   const [showBatchDetailsModal, setShowBatchDetailsModal] = useState(false);
   const [showUploadReceiptModal, setShowUploadReceiptModal] = useState(false);
   const [extractingBatchId, setExtractingBatchId] = useState<string | null>(null);
+  const [receivingBatchId, setReceivingBatchId] = useState<string | null>(null);
 
   const [message, setMessage] = useState<{
     type: 'success' | 'error';
@@ -182,8 +183,9 @@ export function Purchases() {
   const addItem = useMutation(api.purchases.addItem);
   const updateItem = useMutation((api.purchases as any).updateItem);
   const deleteItem = useMutation(api.purchases.deleteItem);
-  const markReviewed = useMutation(api.purchases.markReviewed);
-  const approveBatch = useMutation(api.purchases.approveBatch);
+  const receiveBatchToInventory = useMutation(
+    (api.purchases as any).receiveBatchToInventory
+  );
   const rejectBatch = useMutation(api.purchases.rejectBatch);
   const softDeleteBatch = useMutation((api.purchases as any).softDeleteBatch);
   const restoreBatch = useMutation((api.purchases as any).restoreBatch);
@@ -278,7 +280,7 @@ export function Purchases() {
 
       setMessage({
         type: 'success',
-        text: `AI extracted ${result?.savedCount ?? 0} receipt item(s). Review and link items before approval.`,
+        text: `AI extracted ${result?.savedCount ?? 0} receipt item(s). Open the batch, review/link each row, then click Confirm Receive Stock.`,
       });
     } catch (error: any) {
       setMessage({
@@ -290,27 +292,7 @@ export function Purchases() {
     }
   };
 
-  const handleMarkReviewed = async (batchId: Id<'purchaseBatches'>) => {
-    try {
-      await markReviewed({
-        purchaseBatchId: batchId,
-        actor,
-        notes: 'Purchase batch reviewed from purchases page',
-      });
-
-      setMessage({
-        type: 'success',
-        text: 'Purchase batch marked as reviewed.',
-      });
-    } catch (error: any) {
-      setMessage({
-        type: 'error',
-        text: error?.message || 'Failed to mark purchase batch as reviewed.',
-      });
-    }
-  };
-
-  const handleApprove = async (batchId: Id<'purchaseBatches'>) => {
+  const handleReceiveStock = async (batchId: Id<'purchaseBatches'>) => {
     if (!appUserId) {
       setMessage({
         type: 'error',
@@ -320,28 +302,35 @@ export function Purchases() {
     }
 
     const confirmed = window.confirm(
-      'Approve this purchase batch? This will add linked items into inventory stock.'
+      'Confirm receiving this stock into inventory? This will update inventory quantities and create stock movement records.'
     );
 
     if (!confirmed) return;
 
     try {
-      await approveBatch({
+      setReceivingBatchId(batchId);
+      setMessage(null);
+
+      const result = await receiveBatchToInventory({
         purchaseBatchId: batchId,
-        approvedByUserId: appUserId,
+        receivedByUserId: appUserId,
         actor,
-        notes: 'Purchase batch approved from purchases page',
+        notes: 'Receipt received into inventory from purchases offloading dock',
       });
 
       setMessage({
         type: 'success',
-        text: 'Purchase batch approved. Inventory stock has been updated.',
+        text: `Stock received successfully. ${result?.receivedItemCount ?? 'All'} item(s) were added to inventory.`,
       });
+
+      setShowBatchDetailsModal(false);
     } catch (error: any) {
       setMessage({
         type: 'error',
-        text: error?.message || 'Failed to approve purchase batch.',
+        text: error?.message || 'Failed to receive stock into inventory.',
       });
+    } finally {
+      setReceivingBatchId(null);
     }
   };
 
@@ -460,10 +449,10 @@ export function Purchases() {
       <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-brand-text">
-            Purchases / Weekly Shopping
+            Purchases Offloading Dock
           </h1>
           <p className="text-brand-text-muted mt-1">
-            Upload receipts, let AI extract line items, review them, link to inventory, then approve stock-in.
+            Upload a receipt, let AI extract the items, review/link the rows, then receive stock into inventory.
           </p>
         </div>
 
@@ -472,7 +461,7 @@ export function Purchases() {
           className="px-4 py-2 bg-brand-primary text-brand-navy rounded-xl text-sm font-semibold hover:bg-brand-primary-hover transition-colors flex items-center gap-2"
         >
           <Plus size={18} />
-          New Purchase Batch
+          New Receipt Intake
         </button>
       </div>
 
@@ -623,47 +612,66 @@ export function Purchases() {
 
                       <td className="px-6 py-4">
                         <div className="flex flex-wrap justify-end gap-2">
-                          <button onClick={() => openBatch(batch._id)} className="px-3 py-1.5 rounded-lg bg-gray-100 text-brand-text text-xs font-semibold hover:bg-gray-200 inline-flex items-center gap-1">
-                            <Eye size={14} /> View
+                          <button
+                            onClick={() => openBatch(batch._id)}
+                            className={`px-3 py-2 rounded-xl text-xs font-bold inline-flex items-center gap-1.5 transition-colors ${
+                              canEditBatch(batch.receiptStatus) && !batch.isDeleted && batch.itemCount > 0
+                                ? 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm'
+                                : 'bg-gray-100 text-brand-text hover:bg-gray-200'
+                            }`}
+                          >
+                            <Eye size={14} />
+                            {canEditBatch(batch.receiptStatus) && !batch.isDeleted && batch.itemCount > 0
+                              ? 'Review & Receive'
+                              : 'View'}
                           </button>
 
-                          {canEditBatch(batch.receiptStatus) && !batch.isDeleted && (
-                            <button onClick={() => openUploadReceipt(batch._id)} className="px-3 py-1.5 rounded-lg bg-amber-50 text-amber-700 text-xs font-semibold hover:bg-amber-100 inline-flex items-center gap-1">
-                              <Upload size={14} /> Receipt
+                          {canEditBatch(batch.receiptStatus) && !batch.isDeleted && !batch.receiptImageUrl && (
+                            <button
+                              onClick={() => openUploadReceipt(batch._id)}
+                              className="px-3 py-2 rounded-xl bg-amber-50 text-amber-800 border border-amber-100 text-xs font-bold hover:bg-amber-100 inline-flex items-center gap-1.5"
+                            >
+                              <Upload size={14} /> Upload Receipt
                             </button>
                           )}
 
-                          {batch.receiptImageUrl && canEditBatch(batch.receiptStatus) && !batch.isDeleted && (
-                            <button disabled={extracting} onClick={() => handleExtractReceipt(batch._id)} className="px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 text-xs font-semibold hover:bg-indigo-100 inline-flex items-center gap-1 disabled:opacity-60">
+                          {canEditBatch(batch.receiptStatus) && !batch.isDeleted && batch.receiptImageUrl && batch.itemCount === 0 && (
+                            <button
+                              disabled={extracting}
+                              onClick={() => handleExtractReceipt(batch._id)}
+                              className="px-3 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 inline-flex items-center gap-1.5 disabled:opacity-60 shadow-sm"
+                            >
                               {extracting ? <RefreshCcw size={14} className="animate-spin" /> : <Sparkles size={14} />}
                               {extracting ? 'Extracting' : 'Extract AI'}
                             </button>
                           )}
 
-                          {canEditBatch(batch.receiptStatus) && !batch.isDeleted && (
-                            <button onClick={() => openAddItem(batch._id)} className="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 text-xs font-semibold hover:bg-blue-100">Add Item</button>
+                          {canEditBatch(batch.receiptStatus) && !batch.isDeleted && batch.receiptImageUrl && batch.itemCount > 0 && (
+                            <button
+                              onClick={() => openUploadReceipt(batch._id)}
+                              className="px-3 py-2 rounded-xl bg-gray-50 text-brand-text border border-gray-200 text-xs font-semibold hover:bg-gray-100 inline-flex items-center gap-1.5"
+                            >
+                              <Upload size={14} /> Replace Receipt
+                            </button>
                           )}
 
                           {canEditBatch(batch.receiptStatus) && !batch.isDeleted && (
-                            <button onClick={() => handleMarkReviewed(batch._id)} className="px-3 py-1.5 rounded-lg bg-purple-50 text-purple-700 text-xs font-semibold hover:bg-purple-100">Review</button>
-                          )}
-
-                          {canEditBatch(batch.receiptStatus) && !batch.isDeleted && (
-                            <button onClick={() => handleApprove(batch._id)} className="px-3 py-1.5 rounded-lg bg-green-50 text-green-700 text-xs font-semibold hover:bg-green-100">Approve</button>
-                          )}
-
-                          {canEditBatch(batch.receiptStatus) && !batch.isDeleted && (
-                            <button onClick={() => handleReject(batch._id)} className="px-3 py-1.5 rounded-lg bg-red-50 text-red-700 text-xs font-semibold hover:bg-red-100">Reject</button>
+                            <button
+                              onClick={() => handleReject(batch._id)}
+                              className="px-3 py-2 rounded-xl bg-red-50 text-red-700 border border-red-100 text-xs font-semibold hover:bg-red-100"
+                            >
+                              Reject
+                            </button>
                           )}
 
                           {isSuperAdmin && !batch.isDeleted && (
-                            <button onClick={() => handleArchiveBatch(batch._id)} className="px-3 py-1.5 rounded-lg bg-red-50 text-red-700 text-xs font-semibold hover:bg-red-100 inline-flex items-center gap-1">
+                            <button onClick={() => handleArchiveBatch(batch._id)} className="px-3 py-2 rounded-xl bg-gray-50 text-red-700 border border-gray-200 text-xs font-semibold hover:bg-red-50 inline-flex items-center gap-1.5">
                               <Trash2 size={14} /> Archive
                             </button>
                           )}
 
                           {isSuperAdmin && batch.isDeleted && (
-                            <button onClick={() => handleRestoreBatch(batch._id)} className="px-3 py-1.5 rounded-lg bg-green-50 text-green-700 text-xs font-semibold hover:bg-green-100 inline-flex items-center gap-1">
+                            <button onClick={() => handleRestoreBatch(batch._id)} className="px-3 py-2 rounded-xl bg-green-50 text-green-700 border border-green-100 text-xs font-semibold hover:bg-green-100 inline-flex items-center gap-1.5">
                               <RefreshCcw size={14} /> Restore
                             </button>
                           )}
@@ -706,7 +714,9 @@ export function Purchases() {
           deleteItem={deleteItem}
           actor={actor}
           extracting={extractingBatchId === selectedBatch._id}
+          receiving={receivingBatchId === selectedBatch._id}
           onExtractReceipt={() => handleExtractReceipt(selectedBatch._id)}
+          onReceiveStock={() => handleReceiveStock(selectedBatch._id)}
           onEditItem={openEditItem}
           onAddItem={() => {
             setShowBatchDetailsModal(false);
@@ -780,7 +790,7 @@ function CreateBatchModal({ appUserId, actor, createBatch, onClose, setMessage }
     try {
       setSaving(true);
       await createBatch({ enteredByUserId: appUserId, campusCode: form.campusCode, supplierName: form.supplierName || undefined, receiptEntryMode: 'MANUAL', shoppingDate: form.shoppingDate, weekStartDate: form.weekStartDate, weekEndDate: form.weekEndDate, notes: form.notes || undefined, actor });
-      setMessage({ type: 'success', text: 'Purchase batch created. Upload a receipt, extract with AI, then review items.' });
+      setMessage({ type: 'success', text: 'Receipt intake created. Upload the receipt, extract with AI, review rows, then receive stock.' });
       onClose();
     } catch (error: any) {
       setMessage({ type: 'error', text: error?.message || 'Failed to create purchase batch.' });
@@ -790,7 +800,7 @@ function CreateBatchModal({ appUserId, actor, createBatch, onClose, setMessage }
   };
 
   return (
-    <ModalShell title="New Purchase Batch" onClose={onClose}>
+    <ModalShell title="New Receipt Intake" onClose={onClose}>
       <form onSubmit={submit} className="space-y-4">
         <Select label="Campus" value={form.campusCode} options={campuses} onChange={(value) => setForm({ ...form, campusCode: value as CampusCode })} />
         <Input label="Supplier Name" value={form.supplierName} onChange={(value) => setForm({ ...form, supplierName: value })} placeholder="e.g. Naivas, Local market, Butchery..." />
@@ -954,7 +964,7 @@ function PurchaseItemFormModal({ title, form, setForm, inventoryItems, saving, s
   );
 }
 
-function BatchDetailsModal({ batch, deleteItem, actor, extracting, onExtractReceipt, onEditItem, onAddItem, onUploadReceipt, onViewReceipt, onClose, setMessage }: { batch: any; deleteItem: any; actor: string; extracting: boolean; onExtractReceipt: () => void; onEditItem: (item: any) => void; onAddItem: () => void; onUploadReceipt: () => void; onViewReceipt: () => void; onClose: () => void; setMessage: React.Dispatch<React.SetStateAction<{ type: 'success' | 'error'; text: string } | null>>; }) {
+function BatchDetailsModal({ batch, deleteItem, actor, extracting, receiving, onExtractReceipt, onReceiveStock, onEditItem, onAddItem, onUploadReceipt, onViewReceipt, onClose, setMessage }: { batch: any; deleteItem: any; actor: string; extracting: boolean; receiving: boolean; onExtractReceipt: () => void; onReceiveStock: () => void; onEditItem: (item: any) => void; onAddItem: () => void; onUploadReceipt: () => void; onViewReceipt: () => void; onClose: () => void; setMessage: React.Dispatch<React.SetStateAction<{ type: 'success' | 'error'; text: string } | null>>; }) {
   const handleDeleteItem = async (purchaseItemId: Id<'purchaseItems'>) => {
     const confirmed = window.confirm('Delete this purchase item?');
     if (!confirmed) return;
@@ -967,7 +977,9 @@ function BatchDetailsModal({ batch, deleteItem, actor, extracting, onExtractRece
     }
   };
 
-  const needsReviewCount = (batch.items ?? []).filter((item: any) => !item.inventoryItemId || item.aiNeedsReview).length;
+  const unlinkedItemCount = (batch.items ?? []).filter((item: any) => !item.inventoryItemId).length;
+  const allItemsLinked = (batch.items ?? []).length > 0 && unlinkedItemCount === 0;
+  const canReceiveStock = canEditBatch(batch.receiptStatus) && !batch.isDeleted && allItemsLinked;
 
   return (
     <ModalShell title={`Purchase Batch: ${batch.batchNumber}`} onClose={onClose} maxWidth="max-w-5xl">
@@ -985,12 +997,22 @@ function BatchDetailsModal({ batch, deleteItem, actor, extracting, onExtractRece
           <InfoBox label="Week End" value={batch.weekEndDate} />
         </div>
 
-        {needsReviewCount > 0 && canEditBatch(batch.receiptStatus) && !batch.isDeleted && (
+        {unlinkedItemCount > 0 && canEditBatch(batch.receiptStatus) && !batch.isDeleted && (
           <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-900 flex items-start gap-3">
             <AlertTriangle size={18} className="shrink-0 mt-0.5" />
             <div>
-              <p className="font-bold">{needsReviewCount} receipt item(s) need review before approval.</p>
-              <p className="mt-1">Click Edit on each row, verify quantity/cost, and link it to an inventory item.</p>
+              <p className="font-bold">{unlinkedItemCount} receipt item(s) are not linked to inventory yet.</p>
+              <p className="mt-1">Click Edit on each unlinked row, verify quantity/cost, and link it to an inventory item.</p>
+            </div>
+          </div>
+        )}
+
+        {canReceiveStock && (
+          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-sm text-emerald-900 flex items-start gap-3">
+            <CheckCircle2 size={18} className="shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold">Receipt is ready to receive into inventory.</p>
+              <p className="mt-1">All rows are linked. Confirm Receive Stock will update the Inventory page immediately.</p>
             </div>
           </div>
         )}
@@ -1074,7 +1096,51 @@ function BatchDetailsModal({ batch, deleteItem, actor, extracting, onExtractRece
           </table>
         </div>
 
-        <div className="flex justify-end"><button onClick={onClose} className="px-4 py-2 rounded-lg bg-gray-100 text-brand-text font-semibold hover:bg-gray-200">Close</button></div>
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 border-t border-gray-100 pt-4">
+          <p className="text-xs text-brand-text-muted">
+            Confirm Receive Stock is the final step. It updates Inventory and creates stock movement records.
+          </p>
+
+          <div className="flex flex-wrap justify-end gap-2">
+            {canEditBatch(batch.receiptStatus) && !batch.isDeleted && (
+              <button
+                type="button"
+                onClick={onAddItem}
+                className="px-4 py-2 rounded-xl bg-blue-50 text-blue-700 border border-blue-100 text-sm font-semibold hover:bg-blue-100 inline-flex items-center gap-2"
+              >
+                <Plus size={16} /> Add Row
+              </button>
+            )}
+
+            <button
+              onClick={onClose}
+              className="px-4 py-2 rounded-xl bg-gray-100 text-brand-text text-sm font-semibold hover:bg-gray-200"
+            >
+              Close
+            </button>
+
+            {canEditBatch(batch.receiptStatus) && !batch.isDeleted && (
+              <button
+                type="button"
+                disabled={!canReceiveStock || receiving}
+                onClick={onReceiveStock}
+                className={`px-5 py-2 rounded-xl text-sm font-bold inline-flex items-center gap-2 shadow-sm transition-colors ${
+                  canReceiveStock
+                    ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                    : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                } disabled:opacity-70`}
+                title={
+                  canReceiveStock
+                    ? 'Receive this receipt into inventory'
+                    : 'Link all receipt rows to inventory first'
+                }
+              >
+                {receiving ? <RefreshCcw size={16} className="animate-spin" /> : <PackageCheck size={16} />}
+                {receiving ? 'Receiving...' : 'Confirm Receive Stock'}
+              </button>
+            )}
+          </div>
+        </div>
       </div>
     </ModalShell>
   );
