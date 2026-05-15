@@ -1,5 +1,6 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
+import type { Doc } from "./_generated/dataModel";
 
 const campusValidator = v.union(
   v.literal("MAIN_SCHOOL"),
@@ -36,6 +37,28 @@ function cleanText(value?: string | null) {
 
 function getUnitCost(item: any) {
   return item.averageUnitCost ?? item.lastUnitCost ?? 0;
+}
+
+function isInboundMovement(type: string) {
+  return ["STOCK_IN", "RECEIPT_IN", "LEFTOVER_RETURN"].includes(type);
+}
+
+function isOutboundMovement(type: string) {
+  return ["DISPATCH_OUT", "KITCHEN_ISSUE", "WASTE"].includes(type);
+}
+
+function movementDisplayLabel(type: string) {
+  const labels: Record<string, string> = {
+    STOCK_IN: "Stock In",
+    DISPATCH_OUT: "Dispatch Out",
+    RECEIPT_IN: "Receipt In",
+    ADJUSTMENT: "Stock Adjustment",
+    KITCHEN_ISSUE: "Kitchen Issue / Used",
+    WASTE: "Waste",
+    LEFTOVER_RETURN: "Leftover Return",
+  };
+
+  return labels[type] ?? type.replace(/_/g, " ");
 }
 
 async function createActivityLog(
@@ -91,7 +114,7 @@ async function createActivityLog(
   });
 }
 
-function shapeItem(item: any) {
+function shapeItem(item: Doc<"inventoryItems">) {
   const averageUnitCost = item.averageUnitCost ?? 0;
   const lastUnitCost = item.lastUnitCost ?? 0;
   const effectiveUnitCost = averageUnitCost || lastUnitCost || 0;
@@ -163,7 +186,7 @@ export const getItem = query({
   handler: async (ctx, { inventoryItemId }) => {
     const item = await ctx.db.get(inventoryItemId);
     if (!item) return null;
-    return shapeItem(item);
+    return shapeItem(item as Doc<"inventoryItems">);
   },
 });
 
@@ -183,7 +206,7 @@ export const listLowStock = query({
       .filter((item) => item.isActive && item.currentStock <= item.reorderLevel)
       .sort((a, b) => a.currentStock - b.currentStock)
       .map((item) => ({
-        ...shapeItem(item),
+        ...shapeItem(item as Doc<"inventoryItems">),
         shortage: Math.max(item.reorderLevel - item.currentStock, 0),
       }));
   },
@@ -597,13 +620,22 @@ export const listMovements = query({
     if (args.movementType) {
       movements = movements.filter((movement) => movement.movementType === args.movementType);
     }
-
     return await Promise.all(
       movements.map(async (movement) => {
-        const item = await ctx.db.get(movement.inventoryItemId);
-        const purchaseBatch = movement.purchaseBatchId ? await ctx.db.get(movement.purchaseBatchId) : null;
-        const order = movement.orderId ? await ctx.db.get(movement.orderId) : null;
-
+        const itemDoc = await ctx.db.get(movement.inventoryItemId);
+    
+        const purchaseBatchDoc = movement.purchaseBatchId
+          ? await ctx.db.get(movement.purchaseBatchId)
+          : null;
+    
+        const orderDoc = movement.orderId
+          ? await ctx.db.get(movement.orderId)
+          : null;
+    
+        const item = itemDoc as Doc<"inventoryItems"> | null;
+        const purchaseBatch = purchaseBatchDoc as Doc<"purchaseBatches"> | null;
+        const order = orderDoc as Doc<"campusOrders"> | null;
+    
         return {
           ...movement,
           itemName: item?.name ?? "Unknown item",
@@ -615,6 +647,154 @@ export const listMovements = query({
         };
       })
     );
+  },
+});
+
+export const getItemStockLedger = query({
+  args: {
+    inventoryItemId: v.id("inventoryItems"),
+    movementType: v.optional(movementTypeValidator),
+    limit: v.optional(v.number()),
+  },
+
+  handler: async (ctx, args) => {
+    const itemDoc = await ctx.db.get(args.inventoryItemId);
+
+    if (!itemDoc) {
+      throw new Error("Inventory item not found.");
+    }
+
+    const item = itemDoc as Doc<"inventoryItems">;
+    const limit = Math.min(args.limit ?? 150, 500);
+
+    let movements = await ctx.db
+      .query("inventoryMovements")
+      .withIndex("by_inventoryItemId", (q) =>
+        q.eq("inventoryItemId", args.inventoryItemId)
+      )
+      .order("desc")
+      .take(limit);
+
+    if (args.movementType) {
+      movements = movements.filter(
+        (movement) => movement.movementType === args.movementType
+      );
+    }
+
+    const allMovementsForTotals = await ctx.db
+      .query("inventoryMovements")
+      .withIndex("by_inventoryItemId", (q) =>
+        q.eq("inventoryItemId", args.inventoryItemId)
+      )
+      .collect();
+
+    const totalReceived = allMovementsForTotals
+      .filter((movement) => isInboundMovement(movement.movementType))
+      .reduce((sum, movement) => sum + Math.abs(movement.quantity), 0);
+
+    const totalUsed = allMovementsForTotals
+      .filter((movement) => isOutboundMovement(movement.movementType))
+      .reduce((sum, movement) => sum + Math.abs(movement.quantity), 0);
+
+    const purchasedStockIn = allMovementsForTotals
+      .filter((movement) => movement.movementType === "STOCK_IN")
+      .reduce((sum, movement) => sum + Math.abs(movement.quantity), 0);
+
+    const receiptIn = allMovementsForTotals
+      .filter((movement) => movement.movementType === "RECEIPT_IN")
+      .reduce((sum, movement) => sum + Math.abs(movement.quantity), 0);
+
+    const kitchenUsed = allMovementsForTotals
+      .filter((movement) => movement.movementType === "KITCHEN_ISSUE")
+      .reduce((sum, movement) => sum + Math.abs(movement.quantity), 0);
+
+    const dispatchedOut = allMovementsForTotals
+      .filter((movement) => movement.movementType === "DISPATCH_OUT")
+      .reduce((sum, movement) => sum + Math.abs(movement.quantity), 0);
+
+    const wasted = allMovementsForTotals
+      .filter((movement) => movement.movementType === "WASTE")
+      .reduce((sum, movement) => sum + Math.abs(movement.quantity), 0);
+
+    const leftoverReturned = allMovementsForTotals
+      .filter((movement) => movement.movementType === "LEFTOVER_RETURN")
+      .reduce((sum, movement) => sum + Math.abs(movement.quantity), 0);
+
+    const netAdjustments = allMovementsForTotals
+      .filter((movement) => movement.movementType === "ADJUSTMENT")
+      .reduce((sum, movement) => sum + movement.quantity, 0);
+
+    const averageUnitCost = item.averageUnitCost ?? 0;
+    const lastUnitCost = item.lastUnitCost ?? 0;
+    const effectiveUnitCost = averageUnitCost || lastUnitCost || 0;
+
+    const enrichedMovements = await Promise.all(
+      movements.map(async (movement) => {
+        const purchaseBatch = movement.purchaseBatchId
+          ? await ctx.db.get(movement.purchaseBatchId)
+          : null;
+
+        const order = movement.orderId
+          ? await ctx.db.get(movement.orderId)
+          : null;
+
+        const direction = isInboundMovement(movement.movementType)
+          ? "IN"
+          : isOutboundMovement(movement.movementType)
+            ? "OUT"
+            : movement.quantity >= 0
+              ? "IN"
+              : "OUT";
+
+        return {
+          ...movement,
+          itemName: item.name,
+          itemCategory: item.category,
+          itemUnit: item.unit,
+          campusCode: item.campusCode,
+          displayLabel: movementDisplayLabel(movement.movementType),
+          direction,
+          absoluteQuantity: Math.abs(movement.quantity),
+          signedQuantity: movement.quantity,
+          purchaseBatchNumber: purchaseBatch?.batchNumber ?? null,
+          orderNumber: order?.orderNumber ?? null,
+          sourceLabel:
+            purchaseBatch?.batchNumber ??
+            order?.orderNumber ??
+            movement.notes ??
+            movementDisplayLabel(movement.movementType),
+        };
+      })
+    );
+
+    return {
+      item: shapeItem(item),
+      summary: {
+        itemName: item.name,
+        category: item.category,
+        campusCode: item.campusCode,
+        unit: item.unit,
+        totalReceived,
+        totalUsed,
+        purchasedStockIn,
+        receiptIn,
+        kitchenUsed,
+        dispatchedOut,
+        wasted,
+        leftoverReturned,
+        netAdjustments,
+        remainingStock: item.currentStock,
+        reorderLevel: item.reorderLevel,
+        averageUnitCost,
+        lastUnitCost,
+        effectiveUnitCost,
+        stockValue: item.currentStock * effectiveUnitCost,
+        lastPurchaseDate: item.lastPurchaseDate ?? null,
+        isLowStock: item.isActive && item.currentStock <= item.reorderLevel,
+        movementCount: allMovementsForTotals.length,
+      },
+      movements: enrichedMovements,
+    };
   },
 });
 
@@ -661,7 +841,7 @@ export const getSummary = query({
       outOfStockCount: outOfStockItems.length,
       totalStockValue,
       byCategory,
-      lowStockItems: lowStockItems.map(shapeItem),
+      lowStockItems: lowStockItems.map((item) => shapeItem(item as Doc<"inventoryItems">)),
     };
   },
 });
