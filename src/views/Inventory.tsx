@@ -156,11 +156,10 @@ export function Inventory() {
     campusCode: campusFilter === 'All' ? undefined : campusFilter,
   });
 
-  const movements = useQuery(api.inventory.listMovements, {
-    inventoryItemId: selectedItemId || undefined,
-    movementType: movementFilter === 'All' ? undefined : movementFilter,
-    limit: 75,
-  });
+  const itemLedger = useQuery(
+    (api.inventory as any).getItemStockLedger,
+    selectedItemId ? { inventoryItemId: selectedItemId, limit: 100 } : 'skip'
+  );
 
   const createItem = useMutation(api.inventory.createItem);
   const updateItem = useMutation(api.inventory.updateItem);
@@ -523,7 +522,7 @@ export function Inventory() {
       {showDetailsModal && selectedItem && (
         <ItemDetailsModal
           item={selectedItem}
-          movements={movements}
+          ledger={itemLedger}
           movementFilter={movementFilter}
           setMovementFilter={setMovementFilter}
           onEdit={() => {
@@ -627,7 +626,7 @@ function ModalShell({ title, children, onClose, maxWidth = 'max-w-xl' }: { title
 
 function ItemDetailsModal({
   item,
-  movements,
+  ledger,
   movementFilter,
   setMovementFilter,
   onEdit,
@@ -637,7 +636,7 @@ function ItemDetailsModal({
   onClose,
 }: {
   item: any;
-  movements: any[] | undefined;
+  ledger: any | undefined;
   movementFilter: MovementType | 'All';
   setMovementFilter: (value: MovementType | 'All') => void;
   onEdit: () => void;
@@ -646,99 +645,241 @@ function ItemDetailsModal({
   onWaste: () => void;
   onClose: () => void;
 }) {
+  const summary = ledger?.summary;
+  const movements = ledger?.movements;
+
+  const visibleMovements =
+    movementFilter === 'All'
+      ? movements
+      : movements?.filter((movement: any) => movement.movementType === movementFilter);
+
+  const unit = summary?.unit || item.unit;
+
   return (
-    <ModalShell title={`Inventory Details: ${item.name}`} onClose={onClose} maxWidth="max-w-5xl">
-      <div className="space-y-5">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-          <InfoBox label="Current Stock" value={`${formatNumber(item.currentStock)} ${item.unit}`} />
-          <InfoBox label="Stock Value" value={formatMoney(item.stockValue ?? 0)} />
-          <InfoBox label="Average Cost" value={`${formatMoney(item.averageUnitCost ?? 0)} / ${item.unit}`} />
-          <InfoBox label="Status" value={item.isActive ? (item.isLowStock ? 'Low Stock' : 'Active') : 'Inactive'} />
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-          <InfoBox label="Category" value={item.category} />
-          <InfoBox label="Campus" value={niceLabel(item.campusCode)} />
-          <InfoBox label="Reorder Level" value={`${formatNumber(item.reorderLevel)} ${item.unit}`} />
-          <InfoBox label="Last Purchase" value={formatDate(item.lastPurchaseDate)} />
-        </div>
-
-        {item.isLowStock && item.isActive && (
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-900 flex items-start gap-3">
-            <AlertTriangle size={20} className="shrink-0 mt-0.5" />
+    <ModalShell title={`Item Stock Ledger: ${item.name}`} onClose={onClose} maxWidth="max-w-6xl">
+      <div className="space-y-6">
+        <div className="rounded-2xl border border-gray-100 bg-gradient-to-r from-brand-navy to-slate-800 p-5 text-white">
+          <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
             <div>
-              <p className="text-sm font-semibold">This item is below its reorder level.</p>
-              <p className="text-sm mt-1">Current stock is {formatNumber(item.currentStock)} {item.unit}; reorder level is {formatNumber(item.reorderLevel)} {item.unit}.</p>
+              <p className="text-xs uppercase tracking-wide text-white/60 font-semibold">
+                Individual Item Tracking
+              </p>
+              <h2 className="text-2xl font-bold mt-1">{item.name}</h2>
+              <p className="text-sm text-white/70 mt-2">
+                {item.category} · {niceLabel(item.campusCode)} · measured in {unit}
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 min-w-full lg:min-w-[360px]">
+              <div className="rounded-2xl bg-white/10 border border-white/10 p-4">
+                <p className="text-xs text-white/60 font-semibold uppercase tracking-wide">Remaining</p>
+                <p className="text-xl font-bold mt-1">
+                  {formatNumber(summary?.remainingStock ?? item.currentStock)} {unit}
+                </p>
+              </div>
+              <div className="rounded-2xl bg-white/10 border border-white/10 p-4">
+                <p className="text-xs text-white/60 font-semibold uppercase tracking-wide">Stock Value</p>
+                <p className="text-xl font-bold mt-1">
+                  {formatMoney(summary?.stockValue ?? item.stockValue ?? 0)}
+                </p>
+              </div>
             </div>
           </div>
-        )}
-
-        <div className="flex flex-wrap gap-2">
-          <button onClick={onEdit} className="px-3 py-2 rounded-lg bg-gray-100 text-brand-text text-sm font-semibold hover:bg-gray-200 inline-flex items-center gap-2"><Edit3 size={15} /> Edit Item</button>
-          <button onClick={onStockIn} className="px-3 py-2 rounded-lg bg-green-50 text-green-700 text-sm font-semibold hover:bg-green-100">Stock In</button>
-          <button onClick={onAdjust} className="px-3 py-2 rounded-lg bg-blue-50 text-blue-700 text-sm font-semibold hover:bg-blue-100">Adjust Stock</button>
-          <button onClick={onWaste} className="px-3 py-2 rounded-lg bg-red-50 text-red-700 text-sm font-semibold hover:bg-red-100 inline-flex items-center gap-2"><Trash2 size={15} /> Record Waste</button>
         </div>
 
-        <div className="border border-gray-100 rounded-2xl overflow-hidden">
-          <div className="px-4 py-3 bg-gray-50 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <History size={18} className="text-brand-text-muted" />
-              <h3 className="font-semibold text-brand-text">Movement History</h3>
-            </div>
-            <select
-              value={movementFilter}
-              onChange={(e) => setMovementFilter(e.target.value as MovementType | 'All')}
-              className="px-3 py-2 bg-white border border-gray-200 rounded-xl text-sm"
-            >
-              <option value="All">All movement types</option>
-              {movementTypes.map((type) => (
-                <option key={type} value={type}>{niceLabel(type)}</option>
-              ))}
-            </select>
+        {ledger === undefined ? (
+          <div className="rounded-2xl border border-gray-100 bg-white p-8 text-center text-brand-text-muted">
+            Loading item ledger...
           </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+              <InfoBox
+                label="Total Received"
+                value={`${formatNumber(summary?.totalStockAdded ?? 0)} ${unit}`}
+                tone="success"
+              />
+              <InfoBox
+                label="Total Used / Removed"
+                value={`${formatNumber(summary?.totalStockRemoved ?? 0)} ${unit}`}
+                tone="danger"
+              />
+              <InfoBox
+                label="Remaining Stock"
+                value={`${formatNumber(summary?.remainingStock ?? item.currentStock)} ${unit}`}
+                tone={summary?.isLowStock ? 'warning' : 'default'}
+              />
+              <InfoBox
+                label="Movement Records"
+                value={summary?.movementCount ?? 0}
+              />
+            </div>
 
-          {movements === undefined ? (
-            <p className="px-4 py-8 text-sm text-brand-text-muted text-center">Loading movements...</p>
-          ) : movements.length === 0 ? (
-            <p className="px-4 py-8 text-sm text-brand-text-muted text-center">No movements found for this item.</p>
-          ) : (
-            <div className="divide-y divide-gray-100">
-              {movements.map((movement) => (
-                <div key={movement._id} className="p-4">
-                  <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
-                    <div>
-                      <span className={`inline-flex px-2.5 py-1 rounded-md text-xs font-semibold border ${movementTone(movement.movementType)}`}>
-                        {niceLabel(movement.movementType)}
-                      </span>
-                      <p className="text-sm text-brand-text mt-2">
-                        Qty: <strong>{formatNumber(movement.quantity)} {movement.itemUnit || item.unit}</strong>
-                        {' '}· Cost: <strong>{formatMoney(movement.totalCost ?? 0)}</strong>
-                      </p>
-                      {(movement.purchaseBatchNumber || movement.orderNumber) && (
-                        <p className="text-xs text-brand-text-muted mt-1">
-                          Ref: {movement.purchaseBatchNumber || movement.orderNumber}
-                        </p>
-                      )}
-                      {movement.notes && <p className="text-sm text-brand-text-muted mt-1">{movement.notes}</p>}
-                    </div>
-                    <p className="text-xs text-brand-text-muted whitespace-nowrap">{formatDate(movement.createdAt)}</p>
-                  </div>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+              <InfoBox label="Purchased / Stock In" value={`${formatNumber(summary?.totalReceived ?? 0)} ${unit}`} />
+              <InfoBox label="Kitchen Used" value={`${formatNumber(summary?.totalUsed ?? 0)} ${unit}`} />
+              <InfoBox label="Waste" value={`${formatNumber(summary?.totalWaste ?? 0)} ${unit}`} />
+              <InfoBox label="Leftover Returned" value={`${formatNumber(summary?.totalLeftoverReturned ?? 0)} ${unit}`} />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+              <InfoBox label="Average Cost" value={`${formatMoney(summary?.averageUnitCost ?? item.averageUnitCost ?? 0)} / ${unit}`} />
+              <InfoBox label="Last Cost" value={`${formatMoney(summary?.lastUnitCost ?? item.lastUnitCost ?? 0)} / ${unit}`} />
+              <InfoBox label="Reorder Level" value={`${formatNumber(item.reorderLevel)} ${unit}`} />
+              <InfoBox label="Last Purchase" value={formatDate(summary?.lastPurchaseDate ?? item.lastPurchaseDate)} />
+            </div>
+
+            {summary?.isLowStock && item.isActive && (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-900 flex items-start gap-3">
+                <AlertTriangle size={20} className="shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-semibold">This item is below its reorder level.</p>
+                  <p className="text-sm mt-1">
+                    Current stock is {formatNumber(summary.remainingStock)} {unit}; reorder level is {formatNumber(item.reorderLevel)} {unit}.
+                  </p>
                 </div>
-              ))}
+              </div>
+            )}
+
+            <div className="rounded-2xl border border-gray-100 bg-white p-4">
+              <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+                <div>
+                  <h3 className="font-bold text-brand-text">Quick Actions</h3>
+                  <p className="text-xs text-brand-text-muted mt-1">
+                    Use these actions when correcting or manually updating this item.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <button onClick={onEdit} className="px-3 py-2 rounded-lg bg-gray-100 text-brand-text text-sm font-semibold hover:bg-gray-200 inline-flex items-center gap-2">
+                    <Edit3 size={15} /> Edit Item
+                  </button>
+                  <button onClick={onStockIn} className="px-3 py-2 rounded-lg bg-green-50 text-green-700 text-sm font-semibold hover:bg-green-100">
+                    Stock In
+                  </button>
+                  <button onClick={onAdjust} className="px-3 py-2 rounded-lg bg-blue-50 text-blue-700 text-sm font-semibold hover:bg-blue-100">
+                    Adjust Stock
+                  </button>
+                  <button onClick={onWaste} className="px-3 py-2 rounded-lg bg-red-50 text-red-700 text-sm font-semibold hover:bg-red-100 inline-flex items-center gap-2">
+                    <Trash2 size={15} /> Record Waste
+                  </button>
+                </div>
+              </div>
             </div>
-          )}
-        </div>
+
+            <div className="border border-gray-100 rounded-2xl overflow-hidden bg-white">
+              <div className="px-4 py-3 bg-gray-50 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <History size={18} className="text-brand-text-muted" />
+                    <h3 className="font-semibold text-brand-text">Stock Movement History</h3>
+                  </div>
+                  <p className="text-xs text-brand-text-muted mt-1">
+                    Shows exactly how much {item.name} came in, went out, and why.
+                  </p>
+                </div>
+
+                <select
+                  value={movementFilter}
+                  onChange={(e) => setMovementFilter(e.target.value as MovementType | 'All')}
+                  className="px-3 py-2 bg-white border border-gray-200 rounded-xl text-sm"
+                >
+                  <option value="All">All movement types</option>
+                  {movementTypes.map((type) => (
+                    <option key={type} value={type}>{niceLabel(type)}</option>
+                  ))}
+                </select>
+              </div>
+
+              {visibleMovements === undefined ? (
+                <p className="px-4 py-8 text-sm text-brand-text-muted text-center">Loading movements...</p>
+              ) : visibleMovements.length === 0 ? (
+                <p className="px-4 py-8 text-sm text-brand-text-muted text-center">No movements found for this filter.</p>
+              ) : (
+                <div className="divide-y divide-gray-100">
+                  {visibleMovements.map((movement: any) => {
+                    const isPositive = (movement.signedQuantity ?? movement.quantity) >= 0;
+
+                    return (
+                      <div key={movement._id} className="p-4 hover:bg-gray-50/60 transition-colors">
+                        <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className={`inline-flex px-2.5 py-1 rounded-md text-xs font-semibold border ${movementTone(movement.movementType)}`}>
+                                {niceLabel(movement.movementType)}
+                              </span>
+
+                              <span
+                                className={`inline-flex px-2.5 py-1 rounded-md text-xs font-bold ${
+                                  isPositive ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'
+                                }`}
+                              >
+                                {movement.stockEffectLabel ||
+                                  `${isPositive ? '+' : ''}${formatNumber(movement.signedQuantity ?? movement.quantity)} ${unit}`}
+                              </span>
+                            </div>
+
+                            <p className="text-sm text-brand-text mt-2">
+                              Source: <strong>{movement.sourceLabel || movement.purchaseBatchNumber || movement.orderNumber || 'Manual entry'}</strong>
+                            </p>
+
+                            <p className="text-xs text-brand-text-muted mt-1">
+                              Quantity: {formatNumber(Math.abs(movement.signedQuantity ?? movement.quantity))} {unit}
+                              {' '}· Unit cost: {formatMoney(movement.unitCost ?? 0)}
+                              {' '}· Total: {formatMoney(Math.abs(movement.totalCost ?? 0))}
+                            </p>
+
+                            {movement.notes && (
+                              <p className="text-sm text-brand-text-muted mt-1">
+                                {movement.notes}
+                              </p>
+                            )}
+
+                            {movement.createdByName && (
+                              <p className="text-xs text-brand-text-muted mt-1">
+                                Recorded by {movement.createdByName}
+                              </p>
+                            )}
+                          </div>
+
+                          <p className="text-xs text-brand-text-muted whitespace-nowrap">
+                            {formatDate(movement.createdAt)}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </>
+        )}
       </div>
     </ModalShell>
   );
 }
+function InfoBox({
+  label,
+  value,
+  tone = 'default',
+}: {
+  label: string;
+  value: string | number;
+  tone?: 'default' | 'success' | 'danger' | 'warning';
+}) {
+  const toneClass =
+    tone === 'success'
+      ? 'bg-emerald-50 border-emerald-100 text-emerald-900'
+      : tone === 'danger'
+        ? 'bg-red-50 border-red-100 text-red-900'
+        : tone === 'warning'
+          ? 'bg-amber-50 border-amber-100 text-amber-900'
+          : 'bg-gray-50 border-gray-100 text-brand-text';
 
-function InfoBox({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="bg-gray-50 border border-gray-100 rounded-xl p-3">
-      <p className="text-xs uppercase tracking-wide text-brand-text-muted font-semibold">{label}</p>
-      <p className="text-sm font-semibold text-brand-text mt-1">{value}</p>
+    <div className={`border rounded-xl p-3 ${toneClass}`}>
+      <p className="text-xs uppercase tracking-wide opacity-70 font-semibold">{label}</p>
+      <p className="text-sm font-semibold mt-1">{value}</p>
     </div>
   );
 }

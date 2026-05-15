@@ -1,5 +1,6 @@
-﻿import { query, mutation } from "./_generated/server";
+﻿import { query, mutation, action } from "./_generated/server";
 import { v } from "convex/values";
+import { api } from "./_generated/api";
 
 const campusValidator = v.union(
   v.literal("MAIN_SCHOOL"),
@@ -963,6 +964,62 @@ export const approveBatch = mutation({
   },
 });
 
+
+
+/**
+ * 🔹 EXTRACT RECEIPT WITH AI
+ *
+ * This public action fixes the frontend call to purchases:extractReceiptWithAi.
+ *
+ * Important: this is a safe bridge action. It validates that the batch exists
+ * and that a receipt has been uploaded, then returns a clear result instead
+ * of crashing with "public function not found".
+ *
+ * When you are ready, replace the inside of this handler with the real
+ * Mistral OCR flow: read batch receipt URL, send the file to Mistral, parse
+ * rows, then call addItem/update a helper mutation to save extracted rows.
+ */
+export const extractReceiptWithAi = action({
+  args: {
+    purchaseBatchId: v.id("purchaseBatches"),
+    actor: v.optional(v.string()),
+  },
+
+  handler: async (ctx, args) => {
+    const batch = await ctx.runQuery(api.purchases.getBatch, {
+      purchaseBatchId: args.purchaseBatchId,
+    });
+
+    if (!batch) {
+      throw new Error("Purchase batch not found.");
+    }
+
+    if (batch.isDeleted === true) {
+      throw new Error("This purchase batch has been archived/deleted and cannot be changed.");
+    }
+
+    if (batch.receiptStatus === "APPROVED") {
+      throw new Error("This receipt has already been received into inventory.");
+    }
+
+    if (batch.receiptStatus === "REJECTED") {
+      throw new Error("Cannot extract AI rows from a rejected receipt.");
+    }
+
+    if (!batch.receiptImageUrl) {
+      throw new Error("Upload a receipt before running AI extraction.");
+    }
+
+    return {
+      success: true,
+      purchaseBatchId: args.purchaseBatchId,
+      savedCount: 0,
+      message:
+        "AI extraction function is now available, but the real Mistral OCR parser is not wired yet. Add rows manually or connect Mistral inside this action.",
+      actor: args.actor ?? null,
+    };
+  },
+});
 
 /**
  * 🔹 RECEIVE PURCHASE BATCH DIRECTLY INTO INVENTORY
