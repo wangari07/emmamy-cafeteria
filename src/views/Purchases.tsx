@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Plus,
   Receipt,
@@ -146,8 +146,6 @@ export function Purchases() {
   const [selectedPurchaseItem, setSelectedPurchaseItem] = useState<any | null>(null);
 
   const [showCreateBatchModal, setShowCreateBatchModal] = useState(false);
-  const [showAddItemModal, setShowAddItemModal] = useState(false);
-  const [showEditItemModal, setShowEditItemModal] = useState(false);
   const [showBatchDetailsModal, setShowBatchDetailsModal] = useState(false);
   const [showUploadReceiptModal, setShowUploadReceiptModal] = useState(false);
   const [extractingBatchId, setExtractingBatchId] = useState<string | null>(null);
@@ -220,19 +218,13 @@ export function Purchases() {
 
   const openBatch = (batchId: Id<'purchaseBatches'>) => {
     setSelectedBatchId(batchId);
+    setSelectedPurchaseItem(null);
     setShowBatchDetailsModal(true);
-    setMessage(null);
-  };
-
-  const openAddItem = (batchId: Id<'purchaseBatches'>) => {
-    setSelectedBatchId(batchId);
-    setShowAddItemModal(true);
     setMessage(null);
   };
 
   const openEditItem = (item: any) => {
     setSelectedPurchaseItem(item);
-    setShowEditItemModal(true);
     setMessage(null);
   };
 
@@ -323,6 +315,7 @@ export function Purchases() {
         text: `Stock received successfully. ${result?.receivedItemCount ?? 'All'} item(s) were added to inventory.`,
       });
 
+      setSelectedPurchaseItem(null);
       setShowBatchDetailsModal(false);
     } catch (error: any) {
       setMessage({
@@ -402,7 +395,9 @@ export function Purchases() {
       return;
     }
 
-    const confirmed = window.confirm('Restore this archived purchase batch back to the normal Purchases list?');
+    const confirmed = window.confirm(
+      'Restore this archived purchase batch back to the normal Purchases list?'
+    );
 
     if (!confirmed) return;
 
@@ -469,7 +464,7 @@ export function Purchases() {
         <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 flex items-start gap-3 text-amber-900">
           <AlertTriangle size={20} className="shrink-0 mt-0.5" />
           <p className="text-sm font-medium">
-            I cannot find your app user ID in the login context. Creating and approving purchases needs this ID.
+            I cannot find your app user ID in the login context. Creating and receiving purchases needs this ID.
             If buttons fail, we’ll fix AuthContext next.
           </p>
         </div>
@@ -489,6 +484,7 @@ export function Purchases() {
             onClick={() => {
               setShowArchived((value) => !value);
               setSelectedBatchId(null);
+              setSelectedPurchaseItem(null);
               setMessage(null);
             }}
             className={`px-4 py-2 rounded-xl text-sm font-semibold inline-flex items-center gap-2 ${
@@ -541,17 +537,35 @@ export function Purchases() {
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full xl:w-auto">
-          <select value={campusFilter} onChange={(e) => setCampusFilter(e.target.value as CampusCode | 'All')} className="px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium text-brand-text">
+          <select
+            value={campusFilter}
+            onChange={(e) => setCampusFilter(e.target.value as CampusCode | 'All')}
+            className="px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium text-brand-text"
+          >
             <option value="All">All Campuses</option>
-            {campuses.map((campus) => <option key={campus} value={campus}>{niceLabel(campus)}</option>)}
+            {campuses.map((campus) => (
+              <option key={campus} value={campus}>{niceLabel(campus)}</option>
+            ))}
           </select>
 
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as ReceiptStatus | 'All')} className="px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium text-brand-text">
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as ReceiptStatus | 'All')}
+            className="px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium text-brand-text"
+          >
             <option value="All">All Statuses</option>
-            {receiptStatuses.map((status) => <option key={status} value={status}>{niceLabel(status)}</option>)}
+            {receiptStatuses.map((status) => (
+              <option key={status} value={status}>{niceLabel(status)}</option>
+            ))}
           </select>
 
-          <input type="date" value={weekStartFilter} onChange={(e) => setWeekStartFilter(e.target.value)} className="px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium text-brand-text" title="Filter by week start date" />
+          <input
+            type="date"
+            value={weekStartFilter}
+            onChange={(e) => setWeekStartFilter(e.target.value)}
+            className="px-4 py-2 bg-gray-50 border border-gray-200 rounded-xl text-sm font-medium text-brand-text"
+            title="Filter by week start date"
+          />
         </div>
       </div>
 
@@ -574,41 +588,78 @@ export function Purchases() {
 
             <tbody className="divide-y divide-gray-100">
               {batches === undefined ? (
-                <tr><td colSpan={9} className="px-6 py-10 text-center text-brand-text-muted">Loading purchases...</td></tr>
+                <tr>
+                  <td colSpan={9} className="px-6 py-10 text-center text-brand-text-muted">
+                    Loading purchases...
+                  </td>
+                </tr>
               ) : filteredBatches.length === 0 ? (
-                <tr><td colSpan={9} className="px-6 py-10 text-center text-brand-text-muted">No purchase batches found.</td></tr>
+                <tr>
+                  <td colSpan={9} className="px-6 py-10 text-center text-brand-text-muted">
+                    No purchase batches found.
+                  </td>
+                </tr>
               ) : (
                 filteredBatches.map((batch) => {
                   const extracting = extractingBatchId === batch._id;
+
                   return (
                     <tr key={batch._id} className="hover:bg-gray-50/50 transition-colors">
                       <td className="px-6 py-4">
                         <p className="text-sm font-semibold text-brand-text">{batch.batchNumber}</p>
                         <p className="text-xs text-brand-text-muted">Entered by {batch.enteredByName}</p>
                         <p className="text-xs text-brand-text-muted">{formatDate(batch.createdAt)}</p>
-                        {batch.isDeleted && <p className="mt-1 text-xs font-semibold text-red-700">Archived</p>}
+                        {batch.isDeleted && (
+                          <p className="mt-1 text-xs font-semibold text-red-700">Archived</p>
+                        )}
                       </td>
 
-                      <td className="px-6 py-4 text-sm text-brand-text-muted">{niceLabel(batch.campusCode)}</td>
-                      <td className="px-6 py-4 text-sm text-brand-text">{batch.supplierName || '—'}</td>
+                      <td className="px-6 py-4 text-sm text-brand-text-muted">
+                        {niceLabel(batch.campusCode)}
+                      </td>
+
+                      <td className="px-6 py-4 text-sm text-brand-text">
+                        {batch.supplierName || '—'}
+                      </td>
 
                       <td className="px-6 py-4">
                         {batch.receiptImageUrl ? (
                           <div className="space-y-1">
-                            <button type="button" onClick={() => viewReceipt(batch.receiptImageUrl)} className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 hover:underline">
+                            <button
+                              type="button"
+                              onClick={() => viewReceipt(batch.receiptImageUrl)}
+                              className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 hover:underline"
+                            >
                               <FileText size={14} /> View Receipt
                             </button>
-                            <p className="text-[11px] text-brand-text-muted max-w-[160px] truncate">{batch.receiptFileName || 'Uploaded receipt'}</p>
+                            <p className="text-[11px] text-brand-text-muted max-w-[160px] truncate">
+                              {batch.receiptFileName || 'Uploaded receipt'}
+                            </p>
                           </div>
                         ) : (
-                          <span className="inline-flex px-2.5 py-1 rounded-md text-xs font-medium bg-gray-100 text-gray-600 border border-gray-200">No receipt</span>
+                          <span className="inline-flex px-2.5 py-1 rounded-md text-xs font-medium bg-gray-100 text-gray-600 border border-gray-200">
+                            No receipt
+                          </span>
                         )}
                       </td>
 
-                      <td className="px-6 py-4 text-sm text-brand-text-muted">{batch.weekStartDate}<br /><span className="text-xs">to {batch.weekEndDate}</span></td>
-                      <td className="px-6 py-4 text-sm text-brand-text">{batch.itemCount}</td>
-                      <td className="px-6 py-4 text-sm font-semibold text-brand-text">{formatMoney(batch.totalAmount)}</td>
-                      <td className="px-6 py-4"><StatusBadge status={batch.receiptStatus} /></td>
+                      <td className="px-6 py-4 text-sm text-brand-text-muted">
+                        {batch.weekStartDate}
+                        <br />
+                        <span className="text-xs">to {batch.weekEndDate}</span>
+                      </td>
+
+                      <td className="px-6 py-4 text-sm text-brand-text">
+                        {batch.itemCount}
+                      </td>
+
+                      <td className="px-6 py-4 text-sm font-semibold text-brand-text">
+                        {formatMoney(batch.totalAmount)}
+                      </td>
+
+                      <td className="px-6 py-4">
+                        <StatusBadge status={batch.receiptStatus} />
+                      </td>
 
                       <td className="px-6 py-4">
                         <div className="flex flex-wrap justify-end gap-2">
@@ -665,13 +716,19 @@ export function Purchases() {
                           )}
 
                           {isSuperAdmin && !batch.isDeleted && (
-                            <button onClick={() => handleArchiveBatch(batch._id)} className="px-3 py-2 rounded-xl bg-gray-50 text-red-700 border border-gray-200 text-xs font-semibold hover:bg-red-50 inline-flex items-center gap-1.5">
+                            <button
+                              onClick={() => handleArchiveBatch(batch._id)}
+                              className="px-3 py-2 rounded-xl bg-gray-50 text-red-700 border border-gray-200 text-xs font-semibold hover:bg-red-50 inline-flex items-center gap-1.5"
+                            >
                               <Trash2 size={14} /> Archive
                             </button>
                           )}
 
                           {isSuperAdmin && batch.isDeleted && (
-                            <button onClick={() => handleRestoreBatch(batch._id)} className="px-3 py-2 rounded-xl bg-green-50 text-green-700 border border-green-100 text-xs font-semibold hover:bg-green-100 inline-flex items-center gap-1.5">
+                            <button
+                              onClick={() => handleRestoreBatch(batch._id)}
+                              className="px-3 py-2 rounded-xl bg-green-50 text-green-700 border border-green-100 text-xs font-semibold hover:bg-green-100 inline-flex items-center gap-1.5"
+                            >
                               <RefreshCcw size={14} /> Restore
                             </button>
                           )}
@@ -693,41 +750,53 @@ export function Purchases() {
       </div>
 
       {showCreateBatchModal && appUserId && (
-        <CreateBatchModal appUserId={appUserId} actor={actor} createBatch={createBatch} onClose={() => setShowCreateBatchModal(false)} setMessage={setMessage} />
+        <CreateBatchModal
+          appUserId={appUserId}
+          actor={actor}
+          createBatch={createBatch}
+          onClose={() => setShowCreateBatchModal(false)}
+          setMessage={setMessage}
+        />
       )}
 
       {showUploadReceiptModal && selectedBatch && (
-        <UploadReceiptModal batch={selectedBatch} actor={actor} generateReceiptUploadUrl={generateReceiptUploadUrl} attachReceiptToBatch={attachReceiptToBatch} onClose={() => setShowUploadReceiptModal(false)} setMessage={setMessage} />
-      )}
-
-      {showAddItemModal && selectedBatch && inventoryItems && (
-        <AddPurchaseItemModal batch={selectedBatch} inventoryItems={inventoryItems} addItem={addItem} actor={actor} onClose={() => setShowAddItemModal(false)} setMessage={setMessage} />
-      )}
-
-      {showEditItemModal && selectedBatch && selectedPurchaseItem && inventoryItems && (
-        <EditPurchaseItemModal item={selectedPurchaseItem} batch={selectedBatch} inventoryItems={inventoryItems} updateItem={updateItem} actor={actor} onClose={() => setShowEditItemModal(false)} setMessage={setMessage} />
+        <UploadReceiptModal
+          batch={selectedBatch}
+          actor={actor}
+          generateReceiptUploadUrl={generateReceiptUploadUrl}
+          attachReceiptToBatch={attachReceiptToBatch}
+          onClose={() => setShowUploadReceiptModal(false)}
+          setMessage={setMessage}
+        />
       )}
 
       {showBatchDetailsModal && selectedBatch && (
         <BatchDetailsModal
           batch={selectedBatch}
           deleteItem={deleteItem}
+          updateItem={updateItem}
+          inventoryItems={inventoryItems ?? []}
+          selectedPurchaseItem={selectedPurchaseItem}
+          setSelectedPurchaseItem={setSelectedPurchaseItem}
           actor={actor}
           extracting={extractingBatchId === selectedBatch._id}
           receiving={receivingBatchId === selectedBatch._id}
           onExtractReceipt={() => handleExtractReceipt(selectedBatch._id)}
           onReceiveStock={() => handleReceiveStock(selectedBatch._id)}
           onEditItem={openEditItem}
+          addItem={addItem}
           onAddItem={() => {
-            setShowBatchDetailsModal(false);
-            setShowAddItemModal(true);
+            setSelectedPurchaseItem({ __isNew: true });
           }}
           onUploadReceipt={() => {
             setShowBatchDetailsModal(false);
             setShowUploadReceiptModal(true);
           }}
           onViewReceipt={() => viewReceipt(selectedBatch.receiptImageUrl)}
-          onClose={() => setShowBatchDetailsModal(false)}
+          onClose={() => {
+            setSelectedPurchaseItem(null);
+            setShowBatchDetailsModal(false);
+          }}
           setMessage={setMessage}
         />
       )}
@@ -735,16 +804,34 @@ export function Purchases() {
   );
 }
 
-function SummaryCard({ icon: Icon, label, value, subtext, warning }: { icon: any; label: string; value: string | number; subtext: string; warning?: boolean; }) {
+function SummaryCard({
+  icon: Icon,
+  label,
+  value,
+  subtext,
+  warning,
+}: {
+  icon: any;
+  label: string;
+  value: string | number;
+  subtext: string;
+  warning?: boolean;
+}) {
   return (
     <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
       <div className="flex items-start justify-between">
         <div>
           <p className="text-sm text-brand-text-muted">{label}</p>
-          <p className={`text-2xl font-bold mt-1 ${warning ? 'text-amber-700' : 'text-brand-text'}`}>{value}</p>
+          <p className={`text-2xl font-bold mt-1 ${warning ? 'text-amber-700' : 'text-brand-text'}`}>
+            {value}
+          </p>
           <p className="text-xs text-brand-text-muted mt-1">{subtext}</p>
         </div>
-        <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${warning ? 'bg-amber-50 text-amber-700' : 'bg-brand-primary/20 text-brand-primary'}`}>
+        <div
+          className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+            warning ? 'bg-amber-50 text-amber-700' : 'bg-brand-primary/20 text-brand-primary'
+          }`}
+        >
           <Icon size={22} />
         </div>
       </div>
@@ -763,37 +850,100 @@ function StatusBadge({ status }: { status: ReceiptStatus }) {
     REJECTED: { label: 'Rejected', className: 'bg-red-50 text-red-700 border-red-100' },
   };
 
-  return <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium border ${map[status].className}`}>{map[status].label}</span>;
+  return (
+    <span className={`inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium border ${map[status].className}`}>
+      {map[status].label}
+    </span>
+  );
 }
 
-function ModalShell({ title, children, onClose, maxWidth = 'max-w-xl' }: { title: string; children?: React.ReactNode; onClose: () => void; maxWidth?: string; }) {
+function ModalShell({
+  title,
+  children,
+  onClose,
+  maxWidth = 'max-w-xl',
+}: {
+  title: string;
+  children?: React.ReactNode;
+  onClose: () => void;
+  maxWidth?: string;
+}) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-      <div className={`bg-white rounded-2xl p-6 w-full ${maxWidth} max-h-[90vh] overflow-y-auto`}>
-        <div className="flex items-center justify-between mb-5">
-          <h2 className="text-xl font-bold text-brand-text">{title}</h2>
-          <button type="button" onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 text-gray-500"><X size={18} /></button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 p-3 sm:p-5 backdrop-blur-sm">
+      <div
+        className={`flex w-full ${maxWidth} max-h-[94vh] flex-col overflow-hidden rounded-3xl bg-white shadow-2xl ring-1 ring-black/5`}
+      >
+        <div className="sticky top-0 z-10 flex items-center justify-between gap-4 border-b border-gray-100 bg-white px-5 py-4 sm:px-6">
+          <h2 className="text-lg font-bold text-brand-text sm:text-xl">{title}</h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl p-2 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-800"
+            aria-label="Close modal"
+          >
+            <X size={18} />
+          </button>
         </div>
-        {children}
+        <div className="min-h-0 flex-1 overflow-y-auto p-5 sm:p-6">{children}</div>
       </div>
     </div>
   );
 }
-
-function CreateBatchModal({ appUserId, actor, createBatch, onClose, setMessage }: { appUserId: Id<'appUsers'>; actor: string; createBatch: any; onClose: () => void; setMessage: React.Dispatch<React.SetStateAction<{ type: 'success' | 'error'; text: string } | null>>; }) {
+function CreateBatchModal({
+  appUserId,
+  actor,
+  createBatch,
+  onClose,
+  setMessage,
+}: {
+  appUserId: Id<'appUsers'>;
+  actor: string;
+  createBatch: any;
+  onClose: () => void;
+  setMessage: React.Dispatch<React.SetStateAction<{ type: 'success' | 'error'; text: string } | null>>;
+}) {
   const week = getWeekStartAndEnd();
-  const [form, setForm] = useState({ campusCode: 'MAIN_SCHOOL' as CampusCode, supplierName: '', shoppingDate: todayDate(), weekStartDate: week.weekStartDate, weekEndDate: week.weekEndDate, notes: '' });
+
+  const [form, setForm] = useState({
+    campusCode: 'MAIN_SCHOOL' as CampusCode,
+    supplierName: '',
+    shoppingDate: todayDate(),
+    weekStartDate: week.weekStartDate,
+    weekEndDate: week.weekEndDate,
+    notes: '',
+  });
+
   const [saving, setSaving] = useState(false);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+
     try {
       setSaving(true);
-      await createBatch({ enteredByUserId: appUserId, campusCode: form.campusCode, supplierName: form.supplierName || undefined, receiptEntryMode: 'MANUAL', shoppingDate: form.shoppingDate, weekStartDate: form.weekStartDate, weekEndDate: form.weekEndDate, notes: form.notes || undefined, actor });
-      setMessage({ type: 'success', text: 'Receipt intake created. Upload the receipt, extract with AI, review rows, then receive stock.' });
+
+      await createBatch({
+        enteredByUserId: appUserId,
+        campusCode: form.campusCode,
+        supplierName: form.supplierName || undefined,
+        receiptEntryMode: 'MANUAL',
+        shoppingDate: form.shoppingDate,
+        weekStartDate: form.weekStartDate,
+        weekEndDate: form.weekEndDate,
+        notes: form.notes || undefined,
+        actor,
+      });
+
+      setMessage({
+        type: 'success',
+        text: 'Receipt intake created. Upload the receipt, extract with AI, review rows, then receive stock.',
+      });
+
       onClose();
     } catch (error: any) {
-      setMessage({ type: 'error', text: error?.message || 'Failed to create purchase batch.' });
+      setMessage({
+        type: 'error',
+        text: error?.message || 'Failed to create purchase batch.',
+      });
     } finally {
       setSaving(false);
     }
@@ -802,21 +952,71 @@ function CreateBatchModal({ appUserId, actor, createBatch, onClose, setMessage }
   return (
     <ModalShell title="New Receipt Intake" onClose={onClose}>
       <form onSubmit={submit} className="space-y-4">
-        <Select label="Campus" value={form.campusCode} options={campuses} onChange={(value) => setForm({ ...form, campusCode: value as CampusCode })} />
-        <Input label="Supplier Name" value={form.supplierName} onChange={(value) => setForm({ ...form, supplierName: value })} placeholder="e.g. Naivas, Local market, Butchery..." />
+        <Select
+          label="Campus"
+          value={form.campusCode}
+          options={campuses}
+          onChange={(value) => setForm({ ...form, campusCode: value as CampusCode })}
+        />
+
+        <Input
+          label="Supplier Name"
+          value={form.supplierName}
+          onChange={(value) => setForm({ ...form, supplierName: value })}
+          placeholder="e.g. Naivas, Local market, Butchery..."
+        />
+
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <Input label="Shopping Date" type="date" value={form.shoppingDate} onChange={(value) => setForm({ ...form, shoppingDate: value })} required />
-          <Input label="Week Start" type="date" value={form.weekStartDate} onChange={(value) => setForm({ ...form, weekStartDate: value })} required />
-          <Input label="Week End" type="date" value={form.weekEndDate} onChange={(value) => setForm({ ...form, weekEndDate: value })} required />
+          <Input
+            label="Shopping Date"
+            type="date"
+            value={form.shoppingDate}
+            onChange={(value) => setForm({ ...form, shoppingDate: value })}
+            required
+          />
+          <Input
+            label="Week Start"
+            type="date"
+            value={form.weekStartDate}
+            onChange={(value) => setForm({ ...form, weekStartDate: value })}
+            required
+          />
+          <Input
+            label="Week End"
+            type="date"
+            value={form.weekEndDate}
+            onChange={(value) => setForm({ ...form, weekEndDate: value })}
+            required
+          />
         </div>
-        <TextArea label="Notes" value={form.notes} onChange={(value) => setForm({ ...form, notes: value })} />
+
+        <TextArea
+          label="Notes"
+          value={form.notes}
+          onChange={(value) => setForm({ ...form, notes: value })}
+        />
+
         <ModalActions onClose={onClose} saving={saving} submitLabel="Create Batch" />
       </form>
     </ModalShell>
   );
 }
 
-function UploadReceiptModal({ batch, actor, generateReceiptUploadUrl, attachReceiptToBatch, onClose, setMessage }: { batch: any; actor: string; generateReceiptUploadUrl: any; attachReceiptToBatch: any; onClose: () => void; setMessage: React.Dispatch<React.SetStateAction<{ type: 'success' | 'error'; text: string } | null>>; }) {
+function UploadReceiptModal({
+  batch,
+  actor,
+  generateReceiptUploadUrl,
+  attachReceiptToBatch,
+  onClose,
+  setMessage,
+}: {
+  batch: any;
+  actor: string;
+  generateReceiptUploadUrl: any;
+  attachReceiptToBatch: any;
+  onClose: () => void;
+  setMessage: React.Dispatch<React.SetStateAction<{ type: 'success' | 'error'; text: string } | null>>;
+}) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
 
@@ -828,7 +1028,14 @@ function UploadReceiptModal({ batch, actor, generateReceiptUploadUrl, attachRece
       return;
     }
 
-    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif', 'application/pdf'];
+    const allowedTypes = [
+      'image/jpeg',
+      'image/png',
+      'image/webp',
+      'image/heic',
+      'image/heif',
+      'application/pdf',
+    ];
 
     if (!allowedTypes.includes(selectedFile.type)) {
       setMessage({ type: 'error', text: 'Upload a JPG, PNG, WEBP, HEIC, or PDF receipt file.' });
@@ -837,19 +1044,42 @@ function UploadReceiptModal({ batch, actor, generateReceiptUploadUrl, attachRece
 
     try {
       setUploading(true);
+
       const uploadUrl = await generateReceiptUploadUrl({});
-      const uploadResponse = await fetch(uploadUrl, { method: 'POST', headers: { 'Content-Type': selectedFile.type }, body: selectedFile });
+
+      const uploadResponse = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': selectedFile.type },
+        body: selectedFile,
+      });
 
       if (!uploadResponse.ok) throw new Error('Receipt file upload failed.');
 
       const uploadResult = await uploadResponse.json();
-      if (!uploadResult.storageId) throw new Error('Convex did not return a storageId for this receipt.');
 
-      await attachReceiptToBatch({ purchaseBatchId: batch._id, receiptStorageId: uploadResult.storageId, receiptFileName: selectedFile.name, receiptMimeType: selectedFile.type, actor });
-      setMessage({ type: 'success', text: 'Receipt uploaded. Click Extract AI to read the receipt automatically.' });
+      if (!uploadResult.storageId) {
+        throw new Error('Convex did not return a storageId for this receipt.');
+      }
+
+      await attachReceiptToBatch({
+        purchaseBatchId: batch._id,
+        receiptStorageId: uploadResult.storageId,
+        receiptFileName: selectedFile.name,
+        receiptMimeType: selectedFile.type,
+        actor,
+      });
+
+      setMessage({
+        type: 'success',
+        text: 'Receipt uploaded. Click Extract AI to read the receipt automatically.',
+      });
+
       onClose();
     } catch (error: any) {
-      setMessage({ type: 'error', text: error?.message || 'Failed to upload receipt.' });
+      setMessage({
+        type: 'error',
+        text: error?.message || 'Failed to upload receipt.',
+      });
     } finally {
       setUploading(false);
     }
@@ -858,113 +1088,102 @@ function UploadReceiptModal({ batch, actor, generateReceiptUploadUrl, attachRece
   return (
     <ModalShell title={`Upload Receipt: ${batch.batchNumber}`} onClose={onClose}>
       <form onSubmit={handleUpload} className="space-y-5">
-        {batch.receiptImageUrl && <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 text-sm text-blue-800">This batch already has a receipt attached. Uploading a new file will replace the current receipt reference.</div>}
+        {batch.receiptImageUrl && (
+          <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 text-sm text-blue-800">
+            This batch already has a receipt attached. Uploading a new file will replace the current receipt reference.
+          </div>
+        )}
+
         <div className="border-2 border-dashed border-gray-200 rounded-2xl p-6 text-center bg-gray-50">
           <Upload className="mx-auto text-gray-400 mb-3" size={36} />
           <p className="font-semibold text-brand-text">Select receipt file</p>
-          <p className="text-xs text-brand-text-muted mt-1">Supported: JPG, PNG, WEBP, HEIC, PDF</p>
-          <input type="file" accept="image/*,.pdf" onChange={(e) => setSelectedFile(e.target.files?.[0] || null)} className="mt-4 block w-full text-sm text-brand-text file:mr-4 file:rounded-xl file:border-0 file:bg-brand-primary file:px-4 file:py-2 file:font-semibold file:text-brand-navy hover:file:bg-brand-primary-hover" />
+          <p className="text-xs text-brand-text-muted mt-1">
+            Supported: JPG, PNG, WEBP, HEIC, PDF
+          </p>
+
+          <input
+            type="file"
+            accept="image/*,.pdf"
+            onChange={(e) => setSelectedFile(e.target.files?.[0] || null)}
+            className="mt-4 block w-full text-sm text-brand-text file:mr-4 file:rounded-xl file:border-0 file:bg-brand-primary file:px-4 file:py-2 file:font-semibold file:text-brand-navy hover:file:bg-brand-primary-hover"
+          />
         </div>
-        {selectedFile && <div className="bg-white border border-gray-100 rounded-xl p-4"><p className="text-xs uppercase tracking-wide text-brand-text-muted font-semibold">Selected file</p><p className="text-sm font-semibold text-brand-text mt-1">{selectedFile.name}</p><p className="text-xs text-brand-text-muted mt-1">{(selectedFile.size / 1024 / 1024).toFixed(2)} MB · {selectedFile.type || 'unknown type'}</p></div>}
-        <div className="flex justify-end gap-3 pt-2"><button type="button" onClick={onClose} disabled={uploading} className="px-4 py-2 text-gray-600 hover:bg-gray-50 rounded-lg disabled:opacity-60">Cancel</button><button type="submit" disabled={uploading} className="px-4 py-2 rounded-lg font-bold inline-flex items-center gap-2 disabled:opacity-60 bg-brand-primary text-brand-navy hover:bg-brand-primary-hover">{uploading ? <RefreshCcw size={16} className="animate-spin" /> : <Upload size={16} />}{uploading ? 'Uploading...' : 'Upload Receipt'}</button></div>
+
+        {selectedFile && (
+          <div className="bg-white border border-gray-100 rounded-xl p-4">
+            <p className="text-xs uppercase tracking-wide text-brand-text-muted font-semibold">
+              Selected file
+            </p>
+            <p className="text-sm font-semibold text-brand-text mt-1">{selectedFile.name}</p>
+            <p className="text-xs text-brand-text-muted mt-1">
+              {(selectedFile.size / 1024 / 1024).toFixed(2)} MB · {selectedFile.type || 'unknown type'}
+            </p>
+          </div>
+        )}
+
+        <div className="flex justify-end gap-3 pt-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={uploading}
+            className="px-4 py-2 text-gray-600 hover:bg-gray-50 rounded-lg disabled:opacity-60"
+          >
+            Cancel
+          </button>
+
+          <button
+            type="submit"
+            disabled={uploading}
+            className="px-4 py-2 rounded-lg font-bold inline-flex items-center gap-2 disabled:opacity-60 bg-brand-primary text-brand-navy hover:bg-brand-primary-hover"
+          >
+            {uploading ? <RefreshCcw size={16} className="animate-spin" /> : <Upload size={16} />}
+            {uploading ? 'Uploading...' : 'Upload Receipt'}
+          </button>
+        </div>
       </form>
     </ModalShell>
   );
 }
 
-function AddPurchaseItemModal({ batch, inventoryItems, addItem, actor, onClose, setMessage }: { batch: any; inventoryItems: any[]; addItem: any; actor: string; onClose: () => void; setMessage: React.Dispatch<React.SetStateAction<{ type: 'success' | 'error'; text: string } | null>>; }) {
-  const [form, setForm] = useState({ inventoryItemId: '', itemNameRaw: '', normalizedItemName: '', category: 'LUNCH' as InventoryCategory, quantity: '', unit: '', totalCost: '', notes: '' });
-  const [saving, setSaving] = useState(false);
-
-  const handleInventorySelect = (inventoryItemId: string) => {
-    const item = inventoryItems.find((row) => row._id === inventoryItemId);
-    if (!item) return setForm({ ...form, inventoryItemId });
-    setForm({ ...form, inventoryItemId, itemNameRaw: item.name, normalizedItemName: item.name, category: item.category, unit: item.unit });
-  };
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      setSaving(true);
-      await addItem({ purchaseBatchId: batch._id, inventoryItemId: form.inventoryItemId ? (form.inventoryItemId as Id<'inventoryItems'>) : null, itemNameRaw: form.itemNameRaw, normalizedItemName: form.normalizedItemName || form.itemNameRaw, category: form.category, quantity: Number(form.quantity), unit: form.unit, totalCost: Number(form.totalCost), notes: form.notes || undefined, actor });
-      setMessage({ type: 'success', text: 'Purchase item added successfully.' });
-      onClose();
-    } catch (error: any) {
-      setMessage({ type: 'error', text: error?.message || 'Failed to add purchase item.' });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <PurchaseItemFormModal title={`Add Item to ${batch.batchNumber}`} form={form} setForm={setForm} inventoryItems={inventoryItems} saving={saving} submitLabel="Add Purchase Item" onClose={onClose} onSubmit={submit} onInventorySelect={handleInventorySelect} />
-  );
-}
-
-function EditPurchaseItemModal({ item, batch, inventoryItems, updateItem, actor, onClose, setMessage }: { item: any; batch: any; inventoryItems: any[]; updateItem: any; actor: string; onClose: () => void; setMessage: React.Dispatch<React.SetStateAction<{ type: 'success' | 'error'; text: string } | null>>; }) {
-  const [form, setForm] = useState({ inventoryItemId: item.inventoryItemId || '', itemNameRaw: item.itemNameRaw || '', normalizedItemName: item.normalizedItemName || '', category: item.category || 'OTHER', quantity: String(item.quantity ?? ''), unit: item.unit || '', totalCost: String(item.totalCost ?? ''), notes: item.notes || '' });
-  const [saving, setSaving] = useState(false);
-
-  const handleInventorySelect = (inventoryItemId: string) => {
-    const inventoryItem = inventoryItems.find((row) => row._id === inventoryItemId);
-    if (!inventoryItem) return setForm({ ...form, inventoryItemId });
-    setForm({ ...form, inventoryItemId, normalizedItemName: inventoryItem.name, category: inventoryItem.category, unit: inventoryItem.unit });
-  };
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      setSaving(true);
-      await updateItem({ purchaseItemId: item._id, inventoryItemId: form.inventoryItemId ? (form.inventoryItemId as Id<'inventoryItems'>) : null, itemNameRaw: form.itemNameRaw, normalizedItemName: form.normalizedItemName || form.itemNameRaw, category: form.category, quantity: Number(form.quantity), unit: form.unit, totalCost: Number(form.totalCost), notes: form.notes || undefined, actor });
-      setMessage({ type: 'success', text: 'Purchase item updated. Review remaining AI rows before approval.' });
-      onClose();
-    } catch (error: any) {
-      setMessage({ type: 'error', text: error?.message || 'Failed to update purchase item.' });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <PurchaseItemFormModal title={`Review/Edit Item: ${batch.batchNumber}`} form={form} setForm={setForm} inventoryItems={inventoryItems} saving={saving} submitLabel="Save Item" onClose={onClose} onSubmit={submit} onInventorySelect={handleInventorySelect} reviewMode />
-  );
-}
-
-function PurchaseItemFormModal({ title, form, setForm, inventoryItems, saving, submitLabel, onClose, onSubmit, onInventorySelect, reviewMode }: { title: string; form: any; setForm: React.Dispatch<React.SetStateAction<any>>; inventoryItems: any[]; saving: boolean; submitLabel: string; onClose: () => void; onSubmit: (e: React.FormEvent) => void; onInventorySelect: (inventoryItemId: string) => void; reviewMode?: boolean; }) {
-  const selectedInventoryItem = inventoryItems.find((item) => item._id === form.inventoryItemId);
-
-  return (
-    <ModalShell title={title} onClose={onClose}>
-      <form onSubmit={onSubmit} className="space-y-4">
-        <div className={`${reviewMode ? 'bg-indigo-50 border-indigo-100 text-indigo-800' : 'bg-blue-50 border-blue-100 text-blue-800'} border rounded-xl p-3 text-sm`}>
-          {reviewMode ? 'Review AI extracted values, link the row to the correct inventory item, then save.' : 'Link the receipt item to an inventory item. Approval only works if every purchase item is linked.'}
-        </div>
-
-        <Select label="Link to Inventory Item" value={form.inventoryItemId} onChange={onInventorySelect} options={['', ...inventoryItems.map((item) => item._id)]} renderLabel={(value) => { if (!value) return 'Select inventory item...'; const item = inventoryItems.find((row) => row._id === value); return item ? `${item.name} — ${item.currentStock} ${item.unit}` : value; }} />
-
-        {selectedInventoryItem && <div className="bg-gray-50 border border-gray-100 rounded-xl p-3 text-sm text-brand-text-muted">Current stock: <strong>{selectedInventoryItem.currentStock} {selectedInventoryItem.unit}</strong> | Avg cost: <strong>{formatMoney(selectedInventoryItem.averageUnitCost ?? 0)}</strong></div>}
-
-        <Input label="Receipt Item Name" value={form.itemNameRaw} onChange={(value) => setForm({ ...form, itemNameRaw: value })} required />
-        <Input label="Normalized Name" value={form.normalizedItemName} onChange={(value) => setForm({ ...form, normalizedItemName: value })} placeholder="Clean name used in reports" />
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Select label="Category" value={form.category} options={categories} onChange={(value) => setForm({ ...form, category: value as InventoryCategory })} />
-          <Input label="Unit" value={form.unit} onChange={(value) => setForm({ ...form, unit: value })} placeholder="kg, pcs, litres..." required />
-        </div>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Input label="Quantity" type="number" value={form.quantity} onChange={(value) => setForm({ ...form, quantity: value })} required />
-          <Input label="Total Cost" type="number" value={form.totalCost} onChange={(value) => setForm({ ...form, totalCost: value })} required />
-        </div>
-
-        <TextArea label="Notes" value={form.notes} onChange={(value) => setForm({ ...form, notes: value })} />
-        <ModalActions onClose={onClose} saving={saving} submitLabel={submitLabel} />
-      </form>
-    </ModalShell>
-  );
-}
-
-function BatchDetailsModal({ batch, deleteItem, actor, extracting, receiving, onExtractReceipt, onReceiveStock, onEditItem, onAddItem, onUploadReceipt, onViewReceipt, onClose, setMessage }: { batch: any; deleteItem: any; actor: string; extracting: boolean; receiving: boolean; onExtractReceipt: () => void; onReceiveStock: () => void; onEditItem: (item: any) => void; onAddItem: () => void; onUploadReceipt: () => void; onViewReceipt: () => void; onClose: () => void; setMessage: React.Dispatch<React.SetStateAction<{ type: 'success' | 'error'; text: string } | null>>; }) {
+function BatchDetailsModal({
+  batch,
+  deleteItem,
+  updateItem,
+  addItem,
+  inventoryItems,
+  selectedPurchaseItem,
+  setSelectedPurchaseItem,
+  actor,
+  extracting,
+  receiving,
+  onExtractReceipt,
+  onReceiveStock,
+  onEditItem,
+  onAddItem,
+  onUploadReceipt,
+  onViewReceipt,
+  onClose,
+  setMessage,
+}: {
+  batch: any;
+  deleteItem: any;
+  updateItem: any;
+  addItem: any;
+  inventoryItems: any[];
+  selectedPurchaseItem: any | null;
+  setSelectedPurchaseItem: React.Dispatch<React.SetStateAction<any | null>>;
+  actor: string;
+  extracting: boolean;
+  receiving: boolean;
+  onExtractReceipt: () => void;
+  onReceiveStock: () => void;
+  onEditItem: (item: any) => void;
+  onAddItem: () => void;
+  onUploadReceipt: () => void;
+  onViewReceipt: () => void;
+  onClose: () => void;
+  setMessage: React.Dispatch<React.SetStateAction<{ type: 'success' | 'error'; text: string } | null>>;
+}) {
   const handleDeleteItem = async (purchaseItemId: Id<'purchaseItems'>) => {
     const confirmed = window.confirm('Delete this purchase item?');
     if (!confirmed) return;
@@ -972,146 +1191,335 @@ function BatchDetailsModal({ batch, deleteItem, actor, extracting, receiving, on
     try {
       await deleteItem({ purchaseItemId, actor });
       setMessage({ type: 'success', text: 'Purchase item deleted.' });
+
+      if (selectedPurchaseItem?._id === purchaseItemId) {
+        setSelectedPurchaseItem(null);
+      }
     } catch (error: any) {
-      setMessage({ type: 'error', text: error?.message || 'Failed to delete purchase item.' });
+      setMessage({
+        type: 'error',
+        text: error?.message || 'Failed to delete purchase item.',
+      });
     }
   };
 
-  const unlinkedItemCount = (batch.items ?? []).filter((item: any) => !item.inventoryItemId).length;
-  const allItemsLinked = (batch.items ?? []).length > 0 && unlinkedItemCount === 0;
+  const items = batch.items ?? [];
+  const unlinkedItemCount = items.filter((item: any) => !item.inventoryItemId).length;
+  const allItemsLinked = items.length > 0 && unlinkedItemCount === 0;
   const canReceiveStock = canEditBatch(batch.receiptStatus) && !batch.isDeleted && allItemsLinked;
 
-  return (
-    <ModalShell title={`Purchase Batch: ${batch.batchNumber}`} onClose={onClose} maxWidth="max-w-5xl">
-      <div className="space-y-5">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-          <InfoBox label="Campus" value={niceLabel(batch.campusCode)} />
-          <InfoBox label="Supplier" value={batch.supplierName || '—'} />
-          <InfoBox label="Total" value={formatMoney(batch.totalAmount)} />
-          <InfoBox label="Status" value={niceLabel(batch.receiptStatus)} />
-        </div>
+  const selectedItemFromLiveBatch =
+    selectedPurchaseItem && !selectedPurchaseItem.__isNew
+      ? items.find((item: any) => item._id === selectedPurchaseItem._id)
+      : null;
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <InfoBox label="Shopping Date" value={batch.shoppingDate} />
-          <InfoBox label="Week Start" value={batch.weekStartDate} />
-          <InfoBox label="Week End" value={batch.weekEndDate} />
+  const selectedItemForEditor = selectedPurchaseItem?.__isNew
+    ? selectedPurchaseItem
+    : selectedItemFromLiveBatch || null;
+
+  return (
+    <ModalShell
+      title={`Review & Receive: ${batch.batchNumber}`}
+      onClose={onClose}
+      maxWidth="max-w-7xl"
+    >
+      <div className="space-y-5">
+        <div className="rounded-2xl border border-gray-100 bg-gradient-to-r from-gray-50 to-white p-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+            <InfoBox label="Campus" value={niceLabel(batch.campusCode)} />
+            <InfoBox label="Supplier" value={batch.supplierName || '—'} />
+            <InfoBox label="Total" value={formatMoney(batch.totalAmount)} />
+            <InfoBox label="Status" value={niceLabel(batch.receiptStatus)} />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
+            <InfoBox label="Shopping Date" value={batch.shoppingDate} />
+            <InfoBox label="Week Start" value={batch.weekStartDate} />
+            <InfoBox label="Week End" value={batch.weekEndDate} />
+          </div>
         </div>
 
         {unlinkedItemCount > 0 && canEditBatch(batch.receiptStatus) && !batch.isDeleted && (
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-900 flex items-start gap-3">
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 text-sm text-amber-900 flex items-start gap-3">
             <AlertTriangle size={18} className="shrink-0 mt-0.5" />
             <div>
-              <p className="font-bold">{unlinkedItemCount} receipt item(s) are not linked to inventory yet.</p>
-              <p className="mt-1">Click Edit on each unlinked row, verify quantity/cost, and link it to an inventory item.</p>
+              <p className="font-bold">{unlinkedItemCount} receipt item(s) still need linking.</p>
+              <p className="mt-1">
+                Select a row, use the side panel to link it to inventory, then save. The table updates automatically.
+              </p>
             </div>
           </div>
         )}
 
         {canReceiveStock && (
-          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 text-sm text-emerald-900 flex items-start gap-3">
+          <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-4 text-sm text-emerald-900 flex items-start gap-3">
             <CheckCircle2 size={18} className="shrink-0 mt-0.5" />
             <div>
-              <p className="font-bold">Receipt is ready to receive into inventory.</p>
-              <p className="mt-1">All rows are linked. Confirm Receive Stock will update the Inventory page immediately.</p>
+              <p className="font-bold">Ready to receive into inventory.</p>
+              <p className="mt-1">
+                All rows are linked. Confirm Receive Stock will update the Inventory page immediately.
+              </p>
             </div>
           </div>
         )}
 
-        <div className="bg-gray-50 border border-gray-100 rounded-xl p-4">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-            <div>
-              <p className="text-xs uppercase tracking-wide text-brand-text-muted font-semibold mb-1">Receipt Proof</p>
-              {batch.receiptImageUrl ? (
-                <><p className="text-sm font-semibold text-brand-text">{batch.receiptFileName || 'Uploaded receipt'}</p><p className="text-xs text-brand-text-muted mt-1">{batch.receiptMimeType || 'File uploaded'} · AI confidence: {confidenceLabel(batch.aiConfidence)}</p></>
-              ) : (
-                <p className="text-sm text-brand-text-muted">No receipt has been uploaded for this purchase batch yet.</p>
-              )}
+        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_420px] gap-5 items-start">
+          <div className="space-y-5 min-w-0">
+            <div className="bg-white border border-gray-100 rounded-2xl p-4 shadow-sm">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                <div>
+                  <p className="text-xs uppercase tracking-wide text-brand-text-muted font-semibold mb-1">
+                    Receipt Proof
+                  </p>
+
+                  {batch.receiptImageUrl ? (
+                    <>
+                      <p className="text-sm font-semibold text-brand-text">
+                        {batch.receiptFileName || 'Uploaded receipt'}
+                      </p>
+                      <p className="text-xs text-brand-text-muted mt-1">
+                        {batch.receiptMimeType || 'File uploaded'} · AI confidence:{' '}
+                        {confidenceLabel(batch.aiConfidence)}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-sm text-brand-text-muted">
+                      No receipt has been uploaded for this purchase batch yet.
+                    </p>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {batch.receiptImageUrl && (
+                    <button
+                      type="button"
+                      onClick={onViewReceipt}
+                      className="px-3 py-2 rounded-xl bg-blue-50 text-blue-700 border border-blue-100 text-xs font-bold hover:bg-blue-100 inline-flex items-center gap-1.5"
+                    >
+                      <ExternalLink size={14} /> View Receipt
+                    </button>
+                  )}
+
+                  {batch.receiptImageUrl && canEditBatch(batch.receiptStatus) && !batch.isDeleted && (
+                    <button
+                      type="button"
+                      disabled={extracting}
+                      onClick={onExtractReceipt}
+                      className="px-3 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold hover:bg-indigo-700 inline-flex items-center gap-1.5 disabled:opacity-60 shadow-sm"
+                    >
+                      {extracting ? <RefreshCcw size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                      {extracting ? 'Extracting...' : 'Re-extract AI'}
+                    </button>
+                  )}
+
+                  {canEditBatch(batch.receiptStatus) && !batch.isDeleted && (
+                    <button
+                      type="button"
+                      onClick={onUploadReceipt}
+                      className="px-3 py-2 rounded-xl bg-amber-50 text-amber-800 border border-amber-100 text-xs font-bold hover:bg-amber-100 inline-flex items-center gap-1.5"
+                    >
+                      <Upload size={14} />
+                      {batch.receiptImageUrl ? 'Replace Receipt' : 'Upload Receipt'}
+                    </button>
+                  )}
+                </div>
+              </div>
             </div>
 
-            <div className="flex flex-wrap gap-2">
-              {batch.receiptImageUrl && <button type="button" onClick={onViewReceipt} className="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 text-xs font-semibold hover:bg-blue-100 inline-flex items-center gap-1"><ExternalLink size={14} /> View Receipt</button>}
-              {batch.receiptImageUrl && canEditBatch(batch.receiptStatus) && !batch.isDeleted && <button type="button" disabled={extracting} onClick={onExtractReceipt} className="px-3 py-1.5 rounded-lg bg-indigo-50 text-indigo-700 text-xs font-semibold hover:bg-indigo-100 inline-flex items-center gap-1 disabled:opacity-60">{extracting ? <RefreshCcw size={14} className="animate-spin" /> : <Sparkles size={14} />}{extracting ? 'Extracting...' : 'Extract with AI'}</button>}
-              {canEditBatch(batch.receiptStatus) && !batch.isDeleted && <button type="button" onClick={onUploadReceipt} className="px-3 py-1.5 rounded-lg bg-amber-50 text-amber-700 text-xs font-semibold hover:bg-amber-100 inline-flex items-center gap-1"><Upload size={14} />{batch.receiptImageUrl ? 'Replace Receipt' : 'Upload Receipt'}</button>}
+            {batch.isDeleted && (
+              <div className="bg-red-50 border border-red-100 rounded-2xl p-4 text-sm text-red-800">
+                <p className="font-bold">Archived / Deleted Batch</p>
+                <p className="mt-1">Reason: {batch.deleteReason || 'No reason recorded'}</p>
+                <p className="text-xs mt-1">
+                  Deleted by {batch.deletedByName || 'Unknown'} on {formatDate(batch.deletedAt)}
+                </p>
+              </div>
+            )}
+
+            {batch.notes && (
+              <div className="bg-gray-50 border border-gray-100 rounded-2xl p-4">
+                <p className="text-xs uppercase tracking-wide text-brand-text-muted font-semibold mb-1">
+                  Notes
+                </p>
+                <p className="text-sm text-brand-text">{batch.notes}</p>
+              </div>
+            )}
+
+            <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
+              <div className="px-4 py-4 border-b border-gray-100 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                <div>
+                  <h3 className="font-bold text-brand-text">Receipt Items</h3>
+                  <p className="text-xs text-brand-text-muted mt-1">
+                    Select a row to edit it on the right. Link every row before receiving stock.
+                  </p>
+                </div>
+
+                {canEditBatch(batch.receiptStatus) && !batch.isDeleted && (
+                  <button
+                    onClick={onAddItem}
+                    className="px-3 py-2 rounded-xl bg-brand-primary text-brand-navy text-xs font-bold hover:bg-brand-primary-hover inline-flex items-center gap-1.5"
+                  >
+                    <Plus size={14} /> Add Row
+                  </button>
+                )}
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="bg-gray-50 border-b border-gray-100">
+                      <th className="px-4 py-3 text-xs font-semibold text-brand-text-muted uppercase">Item</th>
+                      <th className="px-4 py-3 text-xs font-semibold text-brand-text-muted uppercase">Inventory Link</th>
+                      <th className="px-4 py-3 text-xs font-semibold text-brand-text-muted uppercase">Qty</th>
+                      <th className="px-4 py-3 text-xs font-semibold text-brand-text-muted uppercase">Unit Cost</th>
+                      <th className="px-4 py-3 text-xs font-semibold text-brand-text-muted uppercase">Total</th>
+                      <th className="px-4 py-3 text-xs font-semibold text-brand-text-muted uppercase text-right">Actions</th>
+                    </tr>
+                  </thead>
+
+                  <tbody className="divide-y divide-gray-100">
+                    {items.length === 0 ? (
+                      <tr>
+                        <td colSpan={6} className="px-4 py-10 text-center text-sm text-brand-text-muted">
+                          No receipt items added yet. Upload a receipt and extract with AI, or add a row manually.
+                        </td>
+                      </tr>
+                    ) : (
+                      items.map((item: any) => {
+                        const isSelected = selectedPurchaseItem?._id === item._id;
+                        const needsLink = !item.inventoryItemId;
+
+                        return (
+                          <tr
+                            key={item._id}
+                            onClick={() => {
+                              if (canEditBatch(batch.receiptStatus) && !batch.isDeleted) {
+                                onEditItem(item);
+                              }
+                            }}
+                            className={`cursor-pointer transition-colors ${
+                              isSelected
+                                ? 'bg-blue-50/80 ring-1 ring-inset ring-blue-200'
+                                : needsLink || item.aiNeedsReview
+                                  ? 'bg-amber-50/30 hover:bg-amber-50/60'
+                                  : 'hover:bg-gray-50'
+                            }`}
+                          >
+                            <td className="px-4 py-3">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="text-sm font-semibold text-brand-text">
+                                  {item.normalizedItemName}
+                                </p>
+
+                                {item.entrySource === 'AI_EXTRACTED' && (
+                                  <span className="inline-flex px-2 py-0.5 rounded-md text-[11px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-100">
+                                    AI {confidenceLabel(item.aiConfidence)}
+                                  </span>
+                                )}
+
+                                {(item.aiNeedsReview || needsLink) && (
+                                  <span className="inline-flex px-2 py-0.5 rounded-md text-[11px] font-semibold bg-amber-100 text-amber-800">
+                                    Needs review
+                                  </span>
+                                )}
+                              </div>
+
+                              <p className="text-xs text-brand-text-muted mt-1">
+                                Receipt: {item.itemNameRaw}
+                              </p>
+                            </td>
+
+                            <td className="px-4 py-3">
+                              {item.inventoryItemId ? (
+                                <span className="inline-flex px-2.5 py-1 rounded-md text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-100">
+                                  {item.inventoryItemName || 'Linked'}
+                                </span>
+                              ) : (
+                                <span className="inline-flex px-2.5 py-1 rounded-md text-xs font-medium bg-red-50 text-red-700 border border-red-100">
+                                  Not linked
+                                </span>
+                              )}
+                            </td>
+
+                            <td className="px-4 py-3 text-sm text-brand-text">
+                              {item.quantity} {item.unit}
+                            </td>
+
+                            <td className="px-4 py-3 text-sm text-brand-text">
+                              {formatMoney(item.unitCost)}
+                            </td>
+
+                            <td className="px-4 py-3 text-sm font-semibold text-brand-text">
+                              {formatMoney(item.totalCost)}
+                            </td>
+
+                            <td className="px-4 py-3 text-right">
+                              {canEditBatch(batch.receiptStatus) && !batch.isDeleted && (
+                                <div className="flex justify-end gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      onEditItem(item);
+                                    }}
+                                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1 ${
+                                      isSelected
+                                        ? 'bg-blue-600 text-white'
+                                        : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+                                    }`}
+                                  >
+                                    <Pencil size={14} />
+                                    {isSelected ? 'Editing' : 'Edit'}
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      handleDeleteItem(item._id);
+                                    }}
+                                    className="px-3 py-1.5 rounded-lg bg-red-50 text-red-700 text-xs font-semibold hover:bg-red-100 inline-flex items-center gap-1"
+                                  >
+                                    <Trash2 size={14} /> Delete
+                                  </button>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
+          </div>
+
+          <div className="xl:sticky xl:top-4">
+            <InlineEditPurchaseItemPanel
+              item={selectedItemForEditor}
+              batch={batch}
+              inventoryItems={inventoryItems}
+              addItem={addItem}
+              updateItem={updateItem}
+              actor={actor}
+              onClear={() => setSelectedPurchaseItem(null)}
+              setMessage={setMessage}
+            />
           </div>
         </div>
 
-        {batch.isDeleted && <div className="bg-red-50 border border-red-100 rounded-xl p-4 text-sm text-red-800"><p className="font-bold">Archived / Deleted Batch</p><p className="mt-1">Reason: {batch.deleteReason || 'No reason recorded'}</p><p className="text-xs mt-1">Deleted by {batch.deletedByName || 'Unknown'} on {formatDate(batch.deletedAt)}</p></div>}
-
-        {batch.notes && <div className="bg-gray-50 border border-gray-100 rounded-xl p-4"><p className="text-xs uppercase tracking-wide text-brand-text-muted font-semibold mb-1">Notes</p><p className="text-sm text-brand-text">{batch.notes}</p></div>}
-
-        <div className="flex items-center justify-between">
-          <h3 className="font-semibold text-brand-text">Receipt Items</h3>
-          {canEditBatch(batch.receiptStatus) && !batch.isDeleted && <button onClick={onAddItem} className="px-3 py-1.5 rounded-lg bg-brand-primary text-brand-navy text-xs font-bold hover:bg-brand-primary-hover inline-flex items-center gap-1"><Plus size={14} /> Add Item</button>}
-        </div>
-
-        <div className="border border-gray-100 rounded-2xl overflow-hidden">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-gray-50 border-b border-gray-100">
-                <th className="px-4 py-3 text-xs font-semibold text-brand-text-muted uppercase">Item</th>
-                <th className="px-4 py-3 text-xs font-semibold text-brand-text-muted uppercase">Linked Inventory</th>
-                <th className="px-4 py-3 text-xs font-semibold text-brand-text-muted uppercase">Qty</th>
-                <th className="px-4 py-3 text-xs font-semibold text-brand-text-muted uppercase">Unit Cost</th>
-                <th className="px-4 py-3 text-xs font-semibold text-brand-text-muted uppercase">Total</th>
-                <th className="px-4 py-3 text-xs font-semibold text-brand-text-muted uppercase text-right">Actions</th>
-              </tr>
-            </thead>
-
-            <tbody className="divide-y divide-gray-100">
-              {batch.items.length === 0 ? (
-                <tr><td colSpan={6} className="px-4 py-8 text-center text-sm text-brand-text-muted">No purchase items added yet.</td></tr>
-              ) : (
-                batch.items.map((item: any) => (
-                  <tr key={item._id} className={item.aiNeedsReview || !item.inventoryItemId ? 'bg-amber-50/30' : undefined}>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-sm font-semibold text-brand-text">{item.normalizedItemName}</p>
-                        {item.entrySource === 'AI_EXTRACTED' && <span className="inline-flex px-2 py-0.5 rounded-md text-[11px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-100">AI {confidenceLabel(item.aiConfidence)}</span>}
-                        {(item.aiNeedsReview || !item.inventoryItemId) && <span className="inline-flex px-2 py-0.5 rounded-md text-[11px] font-semibold bg-amber-100 text-amber-800">Needs review</span>}
-                      </div>
-                      <p className="text-xs text-brand-text-muted">Receipt: {item.itemNameRaw}</p>
-                    </td>
-
-                    <td className="px-4 py-3">
-                      {item.inventoryItemId ? <span className="inline-flex px-2.5 py-1 rounded-md text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-100">{item.inventoryItemName || 'Linked'}</span> : <span className="inline-flex px-2.5 py-1 rounded-md text-xs font-medium bg-red-50 text-red-700 border border-red-100">Not linked</span>}
-                    </td>
-
-                    <td className="px-4 py-3 text-sm text-brand-text">{item.quantity} {item.unit}</td>
-                    <td className="px-4 py-3 text-sm text-brand-text">{formatMoney(item.unitCost)}</td>
-                    <td className="px-4 py-3 text-sm font-semibold text-brand-text">{formatMoney(item.totalCost)}</td>
-
-                    <td className="px-4 py-3 text-right">
-                      {canEditBatch(batch.receiptStatus) && !batch.isDeleted && (
-                        <div className="flex justify-end gap-2">
-                          <button onClick={() => onEditItem(item)} className="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 text-xs font-semibold hover:bg-blue-100 inline-flex items-center gap-1"><Pencil size={14} /> Edit</button>
-                          <button onClick={() => handleDeleteItem(item._id)} className="px-3 py-1.5 rounded-lg bg-red-50 text-red-700 text-xs font-semibold hover:bg-red-100 inline-flex items-center gap-1"><Trash2 size={14} /> Delete</button>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 border-t border-gray-100 pt-4">
-          <p className="text-xs text-brand-text-muted">
-            Confirm Receive Stock is the final step. It updates Inventory and creates stock movement records.
-          </p>
+          <div>
+            <p className="text-xs font-semibold text-brand-text-muted uppercase tracking-wide">
+              Final Step
+            </p>
+            <p className="text-sm text-brand-text-muted mt-1">
+              Confirm Receive Stock updates Inventory and creates permanent stock movement records.
+            </p>
+          </div>
 
           <div className="flex flex-wrap justify-end gap-2">
-            {canEditBatch(batch.receiptStatus) && !batch.isDeleted && (
-              <button
-                type="button"
-                onClick={onAddItem}
-                className="px-4 py-2 rounded-xl bg-blue-50 text-blue-700 border border-blue-100 text-sm font-semibold hover:bg-blue-100 inline-flex items-center gap-2"
-              >
-                <Plus size={16} /> Add Row
-              </button>
-            )}
-
             <button
               onClick={onClose}
               className="px-4 py-2 rounded-xl bg-gray-100 text-brand-text text-sm font-semibold hover:bg-gray-200"
@@ -1146,22 +1554,437 @@ function BatchDetailsModal({ batch, deleteItem, actor, extracting, receiving, on
   );
 }
 
+function InlineEditPurchaseItemPanel({
+  item,
+  batch,
+  inventoryItems,
+  addItem,
+  updateItem,
+  actor,
+  onClear,
+  setMessage,
+}: {
+  item: any | null;
+  batch: any;
+  inventoryItems: any[];
+  addItem: any;
+  updateItem: any;
+  actor: string;
+  onClear: () => void;
+  setMessage: React.Dispatch<React.SetStateAction<{ type: 'success' | 'error'; text: string } | null>>;
+}) {
+  const [saving, setSaving] = useState(false);
+  const isNewItem = Boolean(item?.__isNew);
+
+  const [form, setForm] = useState({
+    inventoryItemId: item?.inventoryItemId || '',
+    itemNameRaw: item?.itemNameRaw || '',
+    normalizedItemName: item?.normalizedItemName || '',
+    category: (item?.category || 'OTHER') as InventoryCategory,
+    quantity: String(item?.quantity ?? ''),
+    unit: item?.unit || '',
+    totalCost: String(item?.totalCost ?? ''),
+    notes: item?.notes || '',
+  });
+
+  useEffect(() => {
+    setForm({
+      inventoryItemId: item?.inventoryItemId || '',
+      itemNameRaw: item?.itemNameRaw || '',
+      normalizedItemName: item?.normalizedItemName || '',
+      category: (item?.category || 'OTHER') as InventoryCategory,
+      quantity: String(item?.quantity ?? ''),
+      unit: item?.unit || '',
+      totalCost: String(item?.totalCost ?? ''),
+      notes: item?.notes || '',
+    });
+  }, [item?._id, item?.__isNew]);
+
+  const selectedInventoryItem = inventoryItems.find(
+    (inventoryItem) => inventoryItem._id === form.inventoryItemId
+  );
+
+  const unitCost =
+    Number(form.quantity) > 0
+      ? Number(form.totalCost || 0) / Number(form.quantity)
+      : 0;
+
+  const handleInventorySelect = (inventoryItemId: string) => {
+    const inventoryItem = inventoryItems.find((row) => row._id === inventoryItemId);
+
+    if (!inventoryItem) {
+      setForm({ ...form, inventoryItemId });
+      return;
+    }
+
+    setForm({
+      ...form,
+      inventoryItemId,
+      normalizedItemName: inventoryItem.name,
+      category: inventoryItem.category,
+      unit: inventoryItem.unit,
+    });
+  };
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!item) return;
+
+    try {
+      setSaving(true);
+
+      const payload = {
+        inventoryItemId: form.inventoryItemId
+          ? (form.inventoryItemId as Id<'inventoryItems'>)
+          : null,
+        itemNameRaw: form.itemNameRaw,
+        normalizedItemName: form.normalizedItemName || form.itemNameRaw,
+        category: form.category,
+        quantity: Number(form.quantity),
+        unit: form.unit,
+        totalCost: Number(form.totalCost),
+        notes: form.notes || undefined,
+        actor,
+      };
+
+      if (isNewItem) {
+        await addItem({
+          purchaseBatchId: batch._id,
+          ...payload,
+        });
+
+        setMessage({
+          type: 'success',
+          text: 'Receipt row added. You can now review/link the next row.',
+        });
+        onClear();
+      } else {
+        await updateItem({
+          purchaseItemId: item._id,
+          ...payload,
+        });
+
+        setMessage({
+          type: 'success',
+          text: 'Receipt row updated. The review table has refreshed.',
+        });
+      }
+    } catch (error: any) {
+      setMessage({
+        type: 'error',
+        text: error?.message || (isNewItem ? 'Failed to add receipt row.' : 'Failed to update receipt row.'),
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!item) {
+    return (
+      <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-6 text-center">
+        <div className="mx-auto h-12 w-12 rounded-2xl bg-white border border-gray-100 flex items-center justify-center text-gray-400">
+          <Pencil size={22} />
+        </div>
+        <h3 className="text-sm font-bold text-brand-text mt-4">
+          Select a row to edit
+        </h3>
+        <p className="text-xs text-brand-text-muted mt-2 leading-relaxed">
+          Click any receipt item on the left. The edit form will stay here so you can review rows and update details without leaving this window.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-2xl border border-gray-100 bg-white shadow-sm overflow-hidden">
+      <div className="bg-brand-navy text-white p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xs uppercase tracking-wide text-white/60 font-semibold">
+              {isNewItem ? 'Adding Receipt Row' : 'Editing Receipt Row'}
+            </p>
+            <h3 className="text-base font-bold mt-1">
+              {isNewItem ? 'New manual row' : item.normalizedItemName || item.itemNameRaw}
+            </h3>
+            <p className="text-xs text-white/70 mt-1">
+              Batch {batch.batchNumber}
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={onClear}
+            className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-white"
+            title="Close editor"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      </div>
+
+      <form onSubmit={submit} className="p-4 space-y-4">
+        <div
+          className={`rounded-xl border p-3 text-sm ${
+            form.inventoryItemId
+              ? 'bg-emerald-50 border-emerald-100 text-emerald-800'
+              : 'bg-amber-50 border-amber-100 text-amber-900'
+          }`}
+        >
+          {form.inventoryItemId
+            ? 'This row is linked and can be received into inventory.'
+            : 'This row is not linked yet. Choose the matching inventory item before receiving stock.'}
+        </div>
+
+        <Select
+          label="Link to Inventory Item"
+          value={form.inventoryItemId}
+          onChange={handleInventorySelect}
+          options={['', ...inventoryItems.map((inventoryItem) => inventoryItem._id)]}
+          renderLabel={(value) => {
+            if (!value) return 'Select inventory item...';
+
+            const inventoryItem = inventoryItems.find((row) => row._id === value);
+
+            return inventoryItem
+              ? `${inventoryItem.name} — ${inventoryItem.currentStock} ${inventoryItem.unit}`
+              : value;
+          }}
+        />
+
+        {selectedInventoryItem && (
+          <div className="bg-gray-50 border border-gray-100 rounded-xl p-3 text-xs text-brand-text-muted">
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <p className="font-semibold text-brand-text">Current stock</p>
+                <p>
+                  {selectedInventoryItem.currentStock} {selectedInventoryItem.unit}
+                </p>
+              </div>
+              <div>
+                <p className="font-semibold text-brand-text">Average cost</p>
+                <p>{formatMoney(selectedInventoryItem.averageUnitCost ?? 0)}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <Input
+          label="Receipt Item Name"
+          value={form.itemNameRaw}
+          onChange={(value) => setForm({ ...form, itemNameRaw: value })}
+          required
+        />
+
+        <Input
+          label="Inventory/Report Name"
+          value={form.normalizedItemName}
+          onChange={(value) => setForm({ ...form, normalizedItemName: value })}
+          placeholder="Clean name used in inventory reports"
+        />
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Select
+            label="Category"
+            value={form.category}
+            options={categories}
+            onChange={(value) =>
+              setForm({ ...form, category: value as InventoryCategory })
+            }
+          />
+
+          <Input
+            label="Unit"
+            value={form.unit}
+            onChange={(value) => setForm({ ...form, unit: value })}
+            placeholder="kg, pcs, litres..."
+            required
+          />
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Input
+            label="Quantity"
+            type="number"
+            value={form.quantity}
+            onChange={(value) => setForm({ ...form, quantity: value })}
+            required
+          />
+
+          <Input
+            label="Total Cost"
+            type="number"
+            value={form.totalCost}
+            onChange={(value) => setForm({ ...form, totalCost: value })}
+            required
+          />
+        </div>
+
+        <div className="rounded-xl bg-gray-50 border border-gray-100 p-3">
+          <p className="text-xs uppercase tracking-wide text-brand-text-muted font-semibold">
+            Calculated Unit Cost
+          </p>
+          <p className="text-lg font-bold text-brand-text mt-1">
+            {formatMoney(unitCost)}
+          </p>
+        </div>
+
+        <TextArea
+          label="Notes"
+          value={form.notes}
+          onChange={(value) => setForm({ ...form, notes: value })}
+        />
+
+        <div className="flex justify-end gap-2 pt-2">
+          <button
+            type="button"
+            onClick={onClear}
+            className="px-4 py-2 rounded-xl bg-gray-100 text-brand-text text-sm font-semibold hover:bg-gray-200"
+          >
+            Clear
+          </button>
+
+          <button
+            type="submit"
+            disabled={saving}
+            className="px-4 py-2 rounded-xl bg-blue-600 text-white text-sm font-bold hover:bg-blue-700 disabled:opacity-60 inline-flex items-center gap-2 shadow-sm"
+          >
+            {saving ? <RefreshCcw size={16} className="animate-spin" /> : <Save size={16} />}
+            {saving ? 'Saving...' : isNewItem ? 'Add Row' : 'Save Row'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 function InfoBox({ label, value }: { label: string; value: string | number }) {
-  return <div className="bg-gray-50 border border-gray-100 rounded-xl p-3"><p className="text-xs uppercase tracking-wide text-brand-text-muted font-semibold">{label}</p><p className="text-sm font-semibold text-brand-text mt-1">{value}</p></div>;
+  return (
+    <div className="bg-gray-50 border border-gray-100 rounded-xl p-3">
+      <p className="text-xs uppercase tracking-wide text-brand-text-muted font-semibold">
+        {label}
+      </p>
+      <p className="text-sm font-semibold text-brand-text mt-1">{value}</p>
+    </div>
+  );
 }
 
-function Input({ label, value, onChange, type = 'text', placeholder, required }: { label: string; value: string; onChange: (value: string) => void; type?: string; placeholder?: string; required?: boolean; }) {
-  return <div><label className="block text-sm font-medium text-brand-text mb-2">{label}</label><input type={type} required={required} placeholder={placeholder} value={value} onChange={(e) => onChange(e.target.value)} className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/40" /></div>;
+function Input({
+  label,
+  value,
+  onChange,
+  type = 'text',
+  placeholder,
+  required,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  type?: string;
+  placeholder?: string;
+  required?: boolean;
+}) {
+  return (
+    <div>
+      <label className="block text-sm font-medium text-brand-text mb-2">
+        {label}
+      </label>
+      <input
+        type={type}
+        required={required}
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/40"
+      />
+    </div>
+  );
 }
 
-function Select({ label, value, onChange, options, renderLabel }: { label: string; value: string; onChange: (value: string) => void; options: string[]; renderLabel?: (value: string) => string; }) {
-  return <div><label className="block text-sm font-medium text-brand-text mb-2">{label}</label><select value={value} onChange={(e) => onChange(e.target.value)} className="w-full px-4 py-2 border border-gray-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-brand-primary/40">{options.map((option) => <option key={option || 'empty'} value={option}>{renderLabel ? renderLabel(option) : niceLabel(option)}</option>)}</select></div>;
+function Select({
+  label,
+  value,
+  onChange,
+  options,
+  renderLabel,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: string[];
+  renderLabel?: (value: string) => string;
+}) {
+  return (
+    <div>
+      <label className="block text-sm font-medium text-brand-text mb-2">
+        {label}
+      </label>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full px-4 py-2 border border-gray-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-brand-primary/40"
+      >
+        {options.map((option) => (
+          <option key={option || 'empty'} value={option}>
+            {renderLabel ? renderLabel(option) : niceLabel(option)}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
 }
 
-function TextArea({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void; }) {
-  return <div><label className="block text-sm font-medium text-brand-text mb-2">{label}</label><textarea value={value} onChange={(e) => onChange(e.target.value)} rows={3} className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/40" /></div>;
+function TextArea({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div>
+      <label className="block text-sm font-medium text-brand-text mb-2">
+        {label}
+      </label>
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        rows={3}
+        className="w-full px-4 py-2 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/40"
+      />
+    </div>
+  );
 }
 
-function ModalActions({ onClose, saving, submitLabel }: { onClose: () => void; saving: boolean; submitLabel: string; }) {
-  return <div className="flex justify-end gap-3 pt-4"><button type="button" onClick={onClose} className="px-4 py-2 text-gray-600 hover:bg-gray-50 rounded-lg">Cancel</button><button type="submit" disabled={saving} className="px-4 py-2 rounded-lg font-bold inline-flex items-center gap-2 disabled:opacity-60 bg-brand-primary text-brand-navy hover:bg-brand-primary-hover">{saving ? <RefreshCcw size={16} className="animate-spin" /> : <Save size={16} />}{saving ? 'Saving...' : submitLabel}</button></div>;
+function ModalActions({
+  onClose,
+  saving,
+  submitLabel,
+}: {
+  onClose: () => void;
+  saving: boolean;
+  submitLabel: string;
+}) {
+  return (
+    <div className="flex justify-end gap-3 pt-4">
+      <button
+        type="button"
+        onClick={onClose}
+        className="px-4 py-2 text-gray-600 hover:bg-gray-50 rounded-lg"
+      >
+        Cancel
+      </button>
+
+      <button
+        type="submit"
+        disabled={saving}
+        className="px-4 py-2 rounded-lg font-bold inline-flex items-center gap-2 disabled:opacity-60 bg-brand-primary text-brand-navy hover:bg-brand-primary-hover"
+      >
+        {saving ? <RefreshCcw size={16} className="animate-spin" /> : <Save size={16} />}
+        {saving ? 'Saving...' : submitLabel}
+      </button>
+    </div>
+  );
 }
